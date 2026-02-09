@@ -1,0 +1,15 @@
+[package]
+name = "rustbac-bacnet-sc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rustbac-datalink = { path = "../rustbac-datalink" }
+futures-util.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+log.workspace = true
+
+[dev-dependencies]

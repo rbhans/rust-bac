@@ -1,0 +1,2 @@
+# NPDU + Confirmed ReadProperty(Device,123,ObjectName,invoke=1)
+01 00 02 05 01 0C 0C 02 00 00 7B 19 4D

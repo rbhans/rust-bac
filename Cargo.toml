@@ -1,0 +1,27 @@
+[workspace]
+members = [
+  "crates/rustbac-core",
+  "crates/rustbac-datalink",
+  "crates/rustbac-bacnet-sc",
+  "crates/rustbac-client",
+  "crates/rustbac-tools",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+log = "0.4"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time", "sync"] }
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+proptest = "=1.4.0"
+serde = { version = "1", features = ["derive"], default-features = false }
+defmt = "0.3"
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }

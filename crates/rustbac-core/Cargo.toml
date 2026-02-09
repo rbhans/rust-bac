@@ -1,0 +1,20 @@
+[package]
+name = "rustbac-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["std", "alloc"]
+std = []
+alloc = []
+serde = ["dep:serde"]
+defmt = ["dep:defmt"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true

@@ -1,0 +1,81 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectType {
+    AnalogInput,
+    AnalogOutput,
+    AnalogValue,
+    BinaryInput,
+    BinaryOutput,
+    BinaryValue,
+    Calendar,
+    Command,
+    Device,
+    EventEnrollment,
+    File,
+    Group,
+    Loop,
+    NotificationClass,
+    Program,
+    Schedule,
+    TrendLog,
+    Averaging,
+    MultiStateInput,
+    MultiStateOutput,
+    MultiStateValue,
+    Proprietary(u16),
+}
+
+impl ObjectType {
+    pub const fn to_u16(self) -> u16 {
+        match self {
+            Self::AnalogInput => 0,
+            Self::AnalogOutput => 1,
+            Self::AnalogValue => 2,
+            Self::BinaryInput => 3,
+            Self::BinaryOutput => 4,
+            Self::BinaryValue => 5,
+            Self::Calendar => 6,
+            Self::Command => 7,
+            Self::Device => 8,
+            Self::EventEnrollment => 9,
+            Self::File => 10,
+            Self::Group => 11,
+            Self::Loop => 12,
+            Self::TrendLog => 20,
+            Self::NotificationClass => 15,
+            Self::Program => 16,
+            Self::Schedule => 17,
+            Self::Averaging => 18,
+            Self::MultiStateInput => 13,
+            Self::MultiStateOutput => 14,
+            Self::MultiStateValue => 19,
+            Self::Proprietary(v) => v,
+        }
+    }
+
+    pub const fn from_u16(value: u16) -> Self {
+        match value {
+            0 => Self::AnalogInput,
+            1 => Self::AnalogOutput,
+            2 => Self::AnalogValue,
+            3 => Self::BinaryInput,
+            4 => Self::BinaryOutput,
+            5 => Self::BinaryValue,
+            6 => Self::Calendar,
+            7 => Self::Command,
+            8 => Self::Device,
+            9 => Self::EventEnrollment,
+            10 => Self::File,
+            11 => Self::Group,
+            12 => Self::Loop,
+            13 => Self::MultiStateInput,
+            14 => Self::MultiStateOutput,
+            15 => Self::NotificationClass,
+            16 => Self::Program,
+            17 => Self::Schedule,
+            18 => Self::Averaging,
+            19 => Self::MultiStateValue,
+            20 => Self::TrendLog,
+            v => Self::Proprietary(v),
+        }
+    }
+}

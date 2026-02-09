@@ -1,0 +1,14 @@
+[package]
+name = "rustbac-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rustbac-client = { path = "../rustbac-client" }
+rustbac-core = { path = "../rustbac-core" }
+rustbac-datalink = { path = "../rustbac-datalink" }
+clap.workspace = true
+env_logger.workspace = true
+tokio.workspace = true

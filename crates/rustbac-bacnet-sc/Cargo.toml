@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rustbac-datalink = { path = "../rustbac-datalink" }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.0" }
 futures-util.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true

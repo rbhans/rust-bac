@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rustbac-core = { path = "../rustbac-core" }
+rustbac-core = { path = "../rustbac-core", version = "0.1.0" }
 thiserror.workspace = true
 tokio.workspace = true
 log.workspace = true

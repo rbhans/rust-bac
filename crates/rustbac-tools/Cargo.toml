@@ -6,9 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-rustbac-client = { path = "../rustbac-client" }
-rustbac-core = { path = "../rustbac-core" }
-rustbac-datalink = { path = "../rustbac-datalink" }
+rustbac-client = { path = "../rustbac-client", version = "0.1.0" }
+rustbac-core = { path = "../rustbac-core", version = "0.1.0" }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.0" }
 clap.workspace = true
 env_logger.workspace = true
 tokio.workspace = true

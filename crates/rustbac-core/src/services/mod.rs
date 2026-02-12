@@ -10,6 +10,7 @@ pub mod event_notification;
 pub mod i_am;
 pub mod list_element;
 pub mod object_management;
+pub mod private_transfer;
 pub mod read_property;
 pub mod read_property_multiple;
 pub mod read_range;

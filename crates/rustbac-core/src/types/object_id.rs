@@ -5,7 +5,7 @@ use crate::types::ObjectType;
 ///
 /// The upper 10 bits encode the object type and the lower 22 bits encode the
 /// instance number, matching the BACnet wire format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectId(u32);
 
 impl ObjectId {

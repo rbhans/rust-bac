@@ -10,9 +10,12 @@
 pub mod address;
 /// BACnet/IP (Annex J) transport implementation.
 pub mod bip;
+/// PCAP packet capture via a [`DataLink`] wrapper.
+pub mod capture;
 /// The [`DataLink`] trait and associated error type.
 pub mod traits;
 
 pub use address::DataLinkAddress;
 pub use bip::transport::{BacnetIpTransport, BroadcastDistributionEntry, ForeignDeviceTableEntry};
+pub use capture::CapturingDataLink;
 pub use traits::{DataLink, DataLinkError};

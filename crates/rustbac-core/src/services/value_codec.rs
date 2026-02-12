@@ -7,6 +7,11 @@ use crate::encoding::{
 use crate::types::{BitString, DataValue, Date, ObjectId, Time};
 use crate::{DecodeError, EncodeError};
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 fn u32_len(len: usize) -> Result<u32, EncodeError> {
     u32::try_from(len).map_err(|_| EncodeError::ValueOutOfRange)
 }
@@ -99,6 +104,14 @@ pub fn encode_application_data_value(
             }
             .encode(w)?;
             w.write_all(&v.raw().to_be_bytes())
+        }
+        #[cfg(feature = "alloc")]
+        DataValue::Constructed { tag_num, values } => {
+            Tag::Opening { tag_num: *tag_num }.encode(w)?;
+            for child in values {
+                encode_application_data_value(w, child)?;
+            }
+            Tag::Closing { tag_num: *tag_num }.encode(w)
         }
     }
 }
@@ -218,6 +231,21 @@ pub fn decode_application_data_value_from_tag<'a>(
                 [b[0], b[1], b[2], b[3]],
             ))))
         }
+        #[cfg(feature = "alloc")]
+        Tag::Opening { tag_num } => {
+            let mut children = Vec::new();
+            loop {
+                let child_tag = Tag::decode(r)?;
+                if child_tag == (Tag::Closing { tag_num }) {
+                    break;
+                }
+                children.push(decode_application_data_value_from_tag(r, child_tag)?);
+            }
+            Ok(DataValue::Constructed {
+                tag_num,
+                values: children,
+            })
+        }
         _ => Err(DecodeError::Unsupported),
     }
 }
@@ -285,5 +313,29 @@ mod tests {
             let got = decode_application_data_value(&mut r).unwrap();
             assert_eq!(got, v);
         }
+    }
+
+    #[test]
+    fn value_codec_roundtrip_constructed() {
+        use alloc::vec;
+
+        let value = DataValue::Constructed {
+            tag_num: 2,
+            values: vec![
+                DataValue::Unsigned(42),
+                DataValue::CharacterString("test"),
+                DataValue::Constructed {
+                    tag_num: 0,
+                    values: vec![DataValue::Boolean(true), DataValue::Real(3.14)],
+                },
+            ],
+        };
+
+        let mut buf = [0u8; 128];
+        let mut w = Writer::new(&mut buf);
+        encode_application_data_value(&mut w, &value).unwrap();
+        let mut r = Reader::new(w.as_written());
+        let got = decode_application_data_value(&mut r).unwrap();
+        assert_eq!(got, value);
     }
 }

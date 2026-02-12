@@ -1,5 +1,9 @@
 use crate::DecodeError;
 
+/// A zero-copy reader that advances through a byte slice.
+///
+/// `Reader` borrows the input buffer and tracks the current position,
+/// returning sub-slices on reads so no allocation is needed.
 #[derive(Debug, Clone, Copy)]
 pub struct Reader<'a> {
     buf: &'a [u8],

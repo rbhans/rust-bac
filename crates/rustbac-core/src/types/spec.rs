@@ -1,3 +1,4 @@
+/// Segmentation capability advertised during device discovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Segmentation {
@@ -7,6 +8,7 @@ pub enum Segmentation {
     NoSegmentation = 3,
 }
 
+/// Maximum APDU length accepted by a device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum MaxApdu {
@@ -18,6 +20,7 @@ pub enum MaxApdu {
     UpTo1476 = 5,
 }
 
+/// BACnet error class reported in Error PDUs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ErrorClass {
@@ -31,6 +34,7 @@ pub enum ErrorClass {
     Communication = 7,
 }
 
+/// BACnet error code reported in Error PDUs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum ErrorCode {

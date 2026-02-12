@@ -2,6 +2,7 @@ use crate::apdu::ApduType;
 use crate::encoding::{reader::Reader, writer::Writer};
 use crate::{DecodeError, EncodeError};
 
+/// Header for a BACnet Unconfirmed-Request APDU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnconfirmedRequestHeader {
     pub service_choice: u8,

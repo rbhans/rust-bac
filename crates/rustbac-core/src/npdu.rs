@@ -1,15 +1,24 @@
 use crate::encoding::{reader::Reader, writer::Writer};
 use crate::{DecodeError, EncodeError};
 
+/// BACnet network layer protocol version (always `0x01`).
 pub const NPDU_VERSION: u8 = 0x01;
 
+/// A network-layer address consisting of a network number and a MAC address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NpduAddress {
+    /// The DNET/SNET network number.
     pub network: u16,
+    /// MAC address bytes (up to 6).
     pub mac: [u8; 6],
+    /// Number of valid bytes in `mac`.
     pub mac_len: u8,
 }
 
+/// BACnet Network Protocol Data Unit (NPDU) header.
+///
+/// Handles encoding and decoding of the NPDU including optional source/
+/// destination addresses, hop count, and network-layer message fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Npdu {
     pub control: u8,

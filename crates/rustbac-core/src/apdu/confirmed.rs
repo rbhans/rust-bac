@@ -7,6 +7,8 @@ use crate::encoding::{
 };
 use crate::{DecodeError, EncodeError};
 
+/// Header for a BACnet Confirmed-Request APDU, including segmentation
+/// flags, invoke ID, and the service choice byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfirmedRequestHeader {
     pub segmented: bool,
@@ -74,6 +76,7 @@ impl ConfirmedRequestHeader {
     }
 }
 
+/// Header for a BACnet Complex-ACK APDU (a response carrying data).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComplexAckHeader {
     pub segmented: bool,
@@ -129,6 +132,7 @@ impl ComplexAckHeader {
     }
 }
 
+/// Header for a BACnet Simple-ACK APDU (acknowledgement without data).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimpleAck {
     pub invoke_id: u8,
@@ -154,6 +158,7 @@ impl SimpleAck {
     }
 }
 
+/// A decoded BACnet Error APDU with optional error class and code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BacnetError {
     pub invoke_id: u8,
@@ -217,6 +222,7 @@ fn decode_bacnet_error_value(
     }
 }
 
+/// A decoded BACnet Reject PDU, indicating a syntactically invalid request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RejectPdu {
     pub invoke_id: u8,
@@ -236,6 +242,7 @@ impl RejectPdu {
     }
 }
 
+/// A decoded BACnet Abort PDU, indicating an aborted transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AbortPdu {
     pub server: bool,
@@ -257,6 +264,7 @@ impl AbortPdu {
     }
 }
 
+/// A BACnet Segment-ACK PDU used during segmented transfers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegmentAck {
     pub negative_ack: bool,

@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Core BACnet protocol types, encoders, and service codecs for rustbac."
+repository = "https://github.com/rbhans/rust-bac"
 
 [features]
 default = ["std", "alloc"]

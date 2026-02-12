@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "BACnet/SC WebSocket transport for rustbac."
+repository = "https://github.com/rbhans/rust-bac"
 
 [dependencies]
 rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.0" }

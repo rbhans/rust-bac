@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "BACnet data-link transports and traits for rustbac."
+repository = "https://github.com/rbhans/rust-bac"
 
 [dependencies]
 rustbac-core = { path = "../rustbac-core", version = "0.1.0" }

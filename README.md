@@ -8,7 +8,7 @@ Rust BACnet/IP workspace with a `no_std` core encoder/decoder, async BACnet/IP t
 - `crates/rustbac-datalink`: BACnet/IP datalink (BVLC/BIP), BBMD/FDR helpers.
 - `crates/rustbac-bacnet-sc`: BACnet/SC WebSocket transport adapter (ws/wss backend wiring).
 - `crates/rustbac-client`: high-level async client API.
-- `crates/rustbac-tools`: CLI binaries (`whois`, `whohas`, `readprop`, `writeprop`, `subcov`, `readrange`, `readfile`, `writefile`, `dcc`, `reinit`, `timesync`, `ackalarm`, `alarmsummary`, `enrollsummary`, `eventinfo`, `eventnotify`, `readbdt`, `writebdt`, `readfdt`, `deletefdt`, `createobj`, `deleteobj`, `addlist`, `removelist`).
+- `crates/rustbac-tools`: CLI binaries (`whois`, `whohas`, `readprop`, `writeprop`, `subcov`, `readrange`, `readfile`, `writefile`, `dcc`, `reinit`, `timesync`, `ackalarm`, `alarmsummary`, `enrollsummary`, `eventinfo`, `eventnotify`, `readbdt`, `writebdt`, `readfdt`, `deletefdt`, `createobj`, `deleteobj`, `addlist`, `removelist`, `listen`, `privatetransfer`, `simulator`, `walkdevice`).
 
 ## Quick Start
 
@@ -45,6 +45,10 @@ cargo run -p rustbac-tools --bin createobj -- --help
 cargo run -p rustbac-tools --bin deleteobj -- --help
 cargo run -p rustbac-tools --bin addlist -- --help
 cargo run -p rustbac-tools --bin removelist -- --help
+cargo run -p rustbac-tools --bin listen -- --help
+cargo run -p rustbac-tools --bin privatetransfer -- --help
+cargo run -p rustbac-tools --bin simulator -- --help
+cargo run -p rustbac-tools --bin walkdevice -- --help
 ```
 
 ## Current Highlights
@@ -77,6 +81,10 @@ cargo run -p rustbac-tools --bin removelist -- --help
 - Segmented confirmed-request transmit (for oversized confirmed requests, configurable window + bounded retransmit retries)
 - Confirmed-service receive loops tolerate transient invalid frames while awaiting responses
 - Foreign Device Registration + BBMD table operations (BDT/FDT)
+- ConfirmedPrivateTransfer (vendor-specific service invocation)
+- Device walk (enumerate all objects and properties on a device)
+- Simulated BACnet device for testing (`SimulatedDevice`)
+- Async notification listener for COV and event notifications (`NotificationListener`)
 - BBMD/FDR admin CLI tools (`readbdt`, `writebdt`, `readfdt`, `deletefdt`)
 - BACnet/SC websocket transport (`BacnetScTransport`, `BacnetClient::new_sc`)
 - Typed remote BACnet error detail mapping (class/code when present)

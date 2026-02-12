@@ -53,6 +53,10 @@ use rustbac_core::services::object_management::{
     CreateObjectAck, CreateObjectRequest, DeleteObjectRequest, SERVICE_CREATE_OBJECT,
     SERVICE_DELETE_OBJECT,
 };
+use rustbac_core::services::private_transfer::{
+    ConfirmedPrivateTransferAck as PrivateTransferAck, ConfirmedPrivateTransferRequest,
+    SERVICE_CONFIRMED_PRIVATE_TRANSFER,
+};
 use rustbac_core::services::read_property::{
     ReadPropertyAck, ReadPropertyRequest, SERVICE_READ_PROPERTY,
 };
@@ -1742,6 +1746,39 @@ impl<D: DataLink> BacnetClient<D> {
         )
         .await
     }
+
+    /// Send a ConfirmedPrivateTransfer request and return the ack.
+    pub async fn private_transfer(
+        &self,
+        address: DataLinkAddress,
+        vendor_id: u32,
+        service_number: u32,
+        service_parameters: Option<&[u8]>,
+    ) -> Result<PrivateTransferAck, ClientError> {
+        let invoke_id = self.next_invoke_id().await;
+        let req = ConfirmedPrivateTransferRequest {
+            vendor_id,
+            service_number,
+            service_parameters,
+            invoke_id,
+        };
+
+        let tx = self.encode_with_growth(|w| {
+            Npdu::new(0).encode(w)?;
+            req.encode(w)
+        })?;
+        let payload = self
+            .await_complex_ack_payload_or_error(
+                address,
+                &tx,
+                invoke_id,
+                SERVICE_CONFIRMED_PRIVATE_TRANSFER,
+                self.response_timeout,
+            )
+            .await?;
+        let mut r = Reader::new(&payload);
+        PrivateTransferAck::decode(&mut r).map_err(ClientError::from)
+    }
 }
 
 fn extract_apdu(payload: &[u8]) -> Result<&[u8], ClientError> {
@@ -1778,6 +1815,16 @@ fn into_client_value(value: DataValue<'_>) -> Result<ClientDataValue, ClientErro
         DataValue::Date(v) => ClientDataValue::Date(v),
         DataValue::Time(v) => ClientDataValue::Time(v),
         DataValue::ObjectId(v) => ClientDataValue::ObjectId(v),
+        DataValue::Constructed { tag_num, values } => {
+            let mut children = Vec::with_capacity(values.len());
+            for child in values {
+                children.push(into_client_value(child)?);
+            }
+            ClientDataValue::Constructed {
+                tag_num,
+                values: children,
+            }
+        }
     })
 }
 

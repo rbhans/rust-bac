@@ -10,9 +10,17 @@ pub enum ClientDataValue {
     Double(f64),
     OctetString(Vec<u8>),
     CharacterString(String),
-    BitString { unused_bits: u8, data: Vec<u8> },
+    BitString {
+        unused_bits: u8,
+        data: Vec<u8>,
+    },
     Enumerated(u32),
     Date(Date),
     Time(Time),
     ObjectId(rustbac_core::types::ObjectId),
+    /// A constructed (complex) value containing a sequence of child values.
+    Constructed {
+        tag_num: u8,
+        values: Vec<ClientDataValue>,
+    },
 }

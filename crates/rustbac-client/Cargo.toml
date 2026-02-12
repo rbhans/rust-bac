@@ -12,3 +12,6 @@ rustbac-bacnet-sc = { path = "../rustbac-bacnet-sc" }
 thiserror.workspace = true
 tokio.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true

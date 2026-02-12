@@ -1,3 +1,8 @@
+//! BACnet/SC (Secure Connect) transport over WebSocket.
+//!
+//! Implements [`DataLink`] by tunnelling BACnet frames through a WebSocket
+//! connection to a BACnet/SC hub.
+
 #![allow(async_fn_in_trait)]
 
 use futures_util::{SinkExt, StreamExt};
@@ -12,6 +17,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 const CHANNEL_DEPTH: usize = 128;
 
+/// A [`DataLink`] implementation that transports BACnet frames over a
+/// WebSocket connection (BACnet/SC).
 #[derive(Debug, Clone)]
 pub struct BacnetScTransport {
     endpoint: String,

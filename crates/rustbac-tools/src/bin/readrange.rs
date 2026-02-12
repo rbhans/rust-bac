@@ -1,43 +1,9 @@
 use clap::{Parser, ValueEnum};
 use rustbac_client::BacnetClient;
-use rustbac_core::types::{Date, ObjectId, ObjectType, PropertyId, Time};
+use rustbac_core::types::{Date, ObjectId, PropertyId, Time};
 use rustbac_datalink::DataLinkAddress;
+use rustbac_tools::ObjectTypeArg;
 use std::net::{IpAddr, SocketAddr};
-
-#[derive(Debug, Clone, ValueEnum)]
-enum ObjectTypeArg {
-    AnalogInput,
-    AnalogOutput,
-    AnalogValue,
-    BinaryInput,
-    BinaryOutput,
-    BinaryValue,
-    Device,
-    File,
-    TrendLog,
-    MultiStateInput,
-    MultiStateOutput,
-    MultiStateValue,
-}
-
-impl ObjectTypeArg {
-    const fn into_object_type(self) -> ObjectType {
-        match self {
-            Self::AnalogInput => ObjectType::AnalogInput,
-            Self::AnalogOutput => ObjectType::AnalogOutput,
-            Self::AnalogValue => ObjectType::AnalogValue,
-            Self::BinaryInput => ObjectType::BinaryInput,
-            Self::BinaryOutput => ObjectType::BinaryOutput,
-            Self::BinaryValue => ObjectType::BinaryValue,
-            Self::Device => ObjectType::Device,
-            Self::File => ObjectType::File,
-            Self::TrendLog => ObjectType::TrendLog,
-            Self::MultiStateInput => ObjectType::MultiStateInput,
-            Self::MultiStateOutput => ObjectType::MultiStateOutput,
-            Self::MultiStateValue => ObjectType::MultiStateValue,
-        }
-    }
-}
 
 #[derive(Debug, Clone, ValueEnum)]
 enum RangeModeArg {

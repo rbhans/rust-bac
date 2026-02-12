@@ -1,5 +1,9 @@
 use crate::EncodeError;
 
+/// A byte writer that encodes into a caller-owned buffer.
+///
+/// Tracks the write position and returns [`EncodeError::BufferTooSmall`] if
+/// the buffer is exhausted.
 #[derive(Debug)]
 pub struct Writer<'a> {
     buf: &'a mut [u8],

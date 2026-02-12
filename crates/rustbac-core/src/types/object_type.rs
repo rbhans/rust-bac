@@ -1,3 +1,7 @@
+/// BACnet object type identifiers as defined in the BACnet specification.
+///
+/// Known standard types are represented as named variants; proprietary
+/// vendor-specific types use the [`Proprietary`](Self::Proprietary) variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectType {
     AnalogInput,
@@ -25,6 +29,7 @@ pub enum ObjectType {
 }
 
 impl ObjectType {
+    /// Converts this object type to its numeric BACnet identifier.
     pub const fn to_u16(self) -> u16 {
         match self {
             Self::AnalogInput => 0,
@@ -52,6 +57,9 @@ impl ObjectType {
         }
     }
 
+    /// Creates an `ObjectType` from its numeric BACnet identifier.
+    ///
+    /// Values without a known standard mapping become [`Proprietary`](Self::Proprietary).
     pub const fn from_u16(value: u16) -> Self {
         match value {
             0 => Self::AnalogInput,

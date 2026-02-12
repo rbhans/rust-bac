@@ -3,6 +3,8 @@ use crate::encoding::{primitives::decode_unsigned, reader::Reader, tag::Tag};
 #[cfg(feature = "alloc")]
 use crate::services::value_codec::decode_application_data_value_from_tag;
 #[cfg(feature = "alloc")]
+use crate::services::{decode_required_ctx_object_id, decode_required_ctx_unsigned};
+#[cfg(feature = "alloc")]
 use crate::types::{DataValue, ObjectId, PropertyId};
 #[cfg(feature = "alloc")]
 use crate::DecodeError;
@@ -108,30 +110,6 @@ impl<'a> CovNotificationRequest<'a> {
             values,
         })
     }
-}
-
-#[cfg(feature = "alloc")]
-fn decode_required_ctx_unsigned(
-    r: &mut Reader<'_>,
-    expected_tag_num: u8,
-) -> Result<u32, DecodeError> {
-    match Tag::decode(r)? {
-        Tag::Context { tag_num, len } if tag_num == expected_tag_num => {
-            decode_unsigned(r, len as usize)
-        }
-        _ => Err(DecodeError::InvalidTag),
-    }
-}
-
-#[cfg(feature = "alloc")]
-fn decode_required_ctx_object_id(
-    r: &mut Reader<'_>,
-    expected_tag_num: u8,
-) -> Result<ObjectId, DecodeError> {
-    Ok(ObjectId::from_raw(decode_required_ctx_unsigned(
-        r,
-        expected_tag_num,
-    )?))
 }
 
 #[cfg(test)]

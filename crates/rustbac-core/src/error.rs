@@ -1,5 +1,6 @@
 use core::fmt;
 
+/// Errors that can occur when encoding BACnet data into a byte buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
     BufferTooSmall,
@@ -24,6 +25,7 @@ impl fmt::Display for EncodeError {
 #[cfg(feature = "std")]
 impl std::error::Error for EncodeError {}
 
+/// Errors that can occur when decoding BACnet data from a byte buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     UnexpectedEof,

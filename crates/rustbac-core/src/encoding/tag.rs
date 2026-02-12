@@ -1,6 +1,7 @@
 use crate::encoding::{reader::Reader, writer::Writer};
 use crate::{DecodeError, EncodeError};
 
+/// Application-layer tag numbers defined by the BACnet standard.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppTag {
@@ -40,11 +41,21 @@ impl AppTag {
     }
 }
 
+/// A decoded BACnet tag.
+///
+/// Tags identify the type and length of the data that follows in the
+/// encoded byte stream. Application tags carry a standard [`AppTag`],
+/// while context tags are numbered per-service and may also act as
+/// opening/closing delimiters for constructed values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tag {
+    /// Standard application-tagged data with a known type and byte length.
     Application { tag: AppTag, len: u32 },
+    /// Context-tagged data identified by a service-specific tag number.
     Context { tag_num: u8, len: u32 },
+    /// Opens a constructed context-tagged value.
     Opening { tag_num: u8 },
+    /// Closes a constructed context-tagged value.
     Closing { tag_num: u8 },
 }
 

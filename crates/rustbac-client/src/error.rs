@@ -2,6 +2,7 @@ use rustbac_core::types::{ErrorClass, ErrorCode};
 use rustbac_datalink::DataLinkError;
 use thiserror::Error;
 
+/// Errors returned by [`BacnetClient`](crate::BacnetClient) operations.
 #[derive(Debug, Error)]
 pub enum ClientError {
     #[error("datalink error: {0}")]

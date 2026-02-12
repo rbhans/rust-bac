@@ -1,3 +1,5 @@
+/// Discriminant for the eight BACnet APDU types, encoded in the upper
+/// nibble of the first APDU byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ApduType {

@@ -1,3 +1,7 @@
+/// BACnet property identifiers.
+///
+/// Common standard properties are named variants; vendor-specific or
+/// unrecognised identifiers use [`Proprietary`](Self::Proprietary).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyId {
     ObjectIdentifier,

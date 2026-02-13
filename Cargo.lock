@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-bacnet-sc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "log",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "env_logger",
  "log",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "defmt 0.3.100",
  "proptest",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-datalink"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "rustbac-core",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "env_logger",

@@ -6,9 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "BACnet/SC WebSocket transport for rustbac."
 repository = "https://github.com/rbhans/rust-bac"
+readme = "../../README.md"
 
 [dependencies]
-rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.0" }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.1" }
 futures-util.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true

@@ -6,11 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 description = "Command-line BACnet tools built on rustbac."
 repository = "https://github.com/rbhans/rust-bac"
+readme = "../../README.md"
 
 [dependencies]
-rustbac-client = { path = "../rustbac-client", version = "0.1.0" }
-rustbac-core = { path = "../rustbac-core", version = "0.1.0" }
-rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.0" }
+rustbac-client = { path = "../rustbac-client", version = "0.1.1" }
+rustbac-core = { path = "../rustbac-core", version = "0.1.1" }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.1" }
 clap.workspace = true
 env_logger.workspace = true
 tokio.workspace = true

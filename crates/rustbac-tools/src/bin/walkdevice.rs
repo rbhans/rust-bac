@@ -17,6 +17,8 @@ struct Args {
     bbmd: Option<SocketAddr>,
     #[arg(long, default_value_t = 60)]
     foreign_ttl: u16,
+    #[arg(long)]
+    json: bool,
 }
 
 #[tokio::main]
@@ -33,19 +35,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = walk_device(&client, addr, device_id).await;
     match result {
         Ok(walk) => {
-            println!(
-                "Device {:?} — {} objects:",
-                walk.device_id,
-                walk.objects.len()
-            );
-            for obj in &walk.objects {
-                let name = obj.object_name.as_deref().unwrap_or("?");
-                let pv = obj
-                    .present_value
-                    .as_ref()
-                    .map(|v| format!("{v:?}"))
-                    .unwrap_or_default();
-                println!("  {:?} \"{name}\" = {pv}", obj.object_id);
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&walk)?);
+            } else {
+                println!(
+                    "Device {:?} — {} objects:",
+                    walk.device_id,
+                    walk.objects.len()
+                );
+                for obj in &walk.objects {
+                    let name = obj.object_name.as_deref().unwrap_or("?");
+                    let pv = obj
+                        .present_value
+                        .as_ref()
+                        .map(|v| format!("{v:?}"))
+                        .unwrap_or_default();
+                    println!("  {:?} \"{name}\" = {pv}", obj.object_id);
+                }
             }
         }
         Err(e) => {

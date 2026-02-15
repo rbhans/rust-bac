@@ -740,6 +740,7 @@ dependencies = [
  "rustbac-bacnet-sc",
  "rustbac-core",
  "rustbac-datalink",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -751,6 +752,7 @@ dependencies = [
  "defmt 0.3.100",
  "proptest",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -759,6 +761,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "rustbac-core",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -772,6 +775,7 @@ dependencies = [
  "rustbac-client",
  "rustbac-core",
  "rustbac-datalink",
+ "serde_json",
  "tokio",
 ]
 
@@ -905,6 +909,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.149"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
 ]
 
 [[package]]
@@ -1347,3 +1364,9 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+
+[[package]]
+name = "zmij"
+version = "1.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"

@@ -11,6 +11,8 @@ pub mod alarm;
 pub mod client;
 /// Change-of-value (COV) notification types.
 pub mod cov;
+/// COV subscriptions with renewal and polling failover.
+pub mod cov_manager;
 /// Device and object discovery (Who-Is / I-Am / Who-Has).
 pub mod discovery;
 /// Client-level error type.
@@ -27,6 +29,8 @@ pub mod range;
 pub mod schedule;
 /// Lightweight simulated BACnet device.
 pub mod simulator;
+/// Per-device request throttling utility.
+pub mod throttle;
 /// Owned application-data values for client-side use.
 pub mod value;
 /// Device discovery walk — reads all objects and their properties.
@@ -38,6 +42,9 @@ pub use alarm::{
 };
 pub use client::{BacnetClient, ForeignDeviceRenewal};
 pub use cov::{CovNotification, CovPropertyValue};
+pub use cov_manager::{
+    CovManager, CovManagerBuilder, CovSubscriptionSpec, CovUpdate, UpdateSource,
+};
 pub use discovery::{DiscoveredDevice, DiscoveredObject};
 pub use error::ClientError;
 pub use file::{AtomicReadFileResult, AtomicWriteFileResult};
@@ -50,6 +57,7 @@ pub use rustbac_core::services::device_management::{DeviceCommunicationState, Re
 pub use rustbac_datalink::bip::transport::{BroadcastDistributionEntry, ForeignDeviceTableEntry};
 pub use schedule::{CalendarEntry, DateRange, TimeValue};
 pub use simulator::SimulatedDevice;
+pub use throttle::DeviceThrottle;
 pub use value::ClientDataValue;
 pub use walk::{DeviceWalkResult, ObjectSummary};
 

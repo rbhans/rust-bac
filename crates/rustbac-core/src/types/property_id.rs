@@ -3,6 +3,7 @@
 /// Common standard properties are named variants; vendor-specific or
 /// unrecognised identifiers use [`Proprietary`](Self::Proprietary).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PropertyId {
     AckedTransitions,
     ActiveText,

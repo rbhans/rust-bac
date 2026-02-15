@@ -7,6 +7,9 @@ license.workspace = true
 description = "High-level async BACnet client API for rustbac."
 repository = "https://github.com/rbhans/rust-bac"
 
+[features]
+serde = ["dep:serde", "rustbac-core/serde", "rustbac-datalink/serde"]
+
 [dependencies]
 rustbac-core = { path = "../rustbac-core", version = "0.1.0" }
 rustbac-datalink = { path = "../rustbac-datalink", version = "0.1.0" }
@@ -14,6 +17,7 @@ rustbac-bacnet-sc = { path = "../rustbac-bacnet-sc", version = "0.1.0" }
 thiserror.workspace = true
 tokio.workspace = true
 log.workspace = true
+serde = { workspace = true, optional = true, features = ["std"] }
 
 [dev-dependencies]
 env_logger.workspace = true

@@ -3,6 +3,7 @@
 /// Known standard types are represented as named variants; proprietary
 /// vendor-specific types use the [`Proprietary`](Self::Proprietary) variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ObjectType {
     AnalogInput,
     AnalogOutput,

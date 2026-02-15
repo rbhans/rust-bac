@@ -12,6 +12,8 @@ struct Args {
     bbmd: Option<SocketAddr>,
     #[arg(long, default_value_t = 60)]
     foreign_ttl: u16,
+    #[arg(long)]
+    json: bool,
 }
 
 #[tokio::main]
@@ -25,8 +27,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let devices = client
         .who_is(None, Duration::from_secs(args.timeout_secs))
         .await?;
-    for (i, d) in devices.iter().enumerate() {
-        println!("{i}: {}", d.address);
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&devices)?);
+    } else {
+        for (i, d) in devices.iter().enumerate() {
+            println!("{i}: {}", d.address);
+        }
     }
     Ok(())
 }

@@ -24,6 +24,8 @@ struct Args {
     bbmd: Option<SocketAddr>,
     #[arg(long, default_value_t = 60)]
     foreign_ttl: u16,
+    #[arg(long)]
+    json: bool,
 }
 
 #[tokio::main]
@@ -61,12 +63,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?
     };
 
-    for item in &results {
-        println!(
-            "device={:?} object={:?} name={:?} source={}",
-            item.device_id, item.object_id, item.object_name, item.address
-        );
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else {
+        for item in &results {
+            println!(
+                "device={:?} object={:?} name={:?} source={}",
+                item.device_id, item.object_id, item.object_name, item.address
+            );
+        }
+        println!("found {} object(s)", results.len());
     }
-    println!("found {} object(s)", results.len());
     Ok(())
 }

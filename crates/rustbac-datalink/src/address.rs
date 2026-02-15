@@ -5,6 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 ///
 /// Currently only BACnet/IP (UDP socket address) is supported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DataLinkAddress {
     /// A BACnet/IP endpoint (IPv4 or IPv6 socket address).
     Ip(SocketAddr),

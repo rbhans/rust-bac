@@ -3,6 +3,7 @@ use rustbac_core::types::{ObjectId, PropertyId};
 use rustbac_datalink::DataLinkAddress;
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CovPropertyValue {
     pub property_id: PropertyId,
     pub array_index: Option<u32>,
@@ -11,6 +12,7 @@ pub struct CovPropertyValue {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CovNotification {
     pub source: DataLinkAddress,
     pub confirmed: bool,

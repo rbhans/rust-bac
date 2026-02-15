@@ -2,6 +2,7 @@
 ///
 /// A value of `0xFF` in any field means "unspecified".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Date {
     /// Year minus 1900. E.g. `124` means 2024.
     pub year_since_1900: u8,
@@ -17,6 +18,7 @@ pub struct Date {
 ///
 /// A value of `0xFF` in any field means "unspecified".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Time {
     pub hour: u8,
     pub minute: u8,

@@ -7,6 +7,7 @@ use rustbac_datalink::{DataLink, DataLinkAddress};
 
 /// Summary of a single object on a device.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ObjectSummary {
     pub object_id: ObjectId,
     pub object_name: Option<String>,
@@ -19,6 +20,7 @@ pub struct ObjectSummary {
 
 /// Result of a full device walk.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DeviceWalkResult {
     pub device_id: ObjectId,
     pub objects: Vec<ObjectSummary>,

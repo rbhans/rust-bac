@@ -204,10 +204,8 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_rejects_out_of_range_instance() {
-        let err = serde_json::from_str::<ObjectId>(
-            r#"{"type":"AnalogInput","instance":4194304}"#,
-        )
-        .expect_err("instance above 22-bit range should fail");
+        let err = serde_json::from_str::<ObjectId>(r#"{"type":"AnalogInput","instance":4194304}"#)
+            .expect_err("instance above 22-bit range should fail");
         assert!(
             err.to_string().contains("instance"),
             "unexpected error: {err}"
@@ -217,10 +215,8 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_rejects_out_of_range_object_type() {
-        let err = serde_json::from_str::<ObjectId>(
-            r#"{"type":{"Proprietary":1024},"instance":1}"#,
-        )
-        .expect_err("object type above 10-bit range should fail");
+        let err = serde_json::from_str::<ObjectId>(r#"{"type":{"Proprietary":1024},"instance":1}"#)
+            .expect_err("object type above 10-bit range should fail");
         assert!(
             err.to_string().contains("object type"),
             "unexpected error: {err}"

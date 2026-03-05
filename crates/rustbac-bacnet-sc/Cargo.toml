@@ -8,7 +8,7 @@ description = "BACnet/SC WebSocket transport for rustbac."
 repository = "https://github.com/rbhans/rust-bac"
 
 [dependencies]
-rustbac-datalink = { path = "../rustbac-datalink", version = "0.2.0" }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.2.1" }
 futures-util.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true

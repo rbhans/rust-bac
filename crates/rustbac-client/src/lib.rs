@@ -58,7 +58,9 @@ pub use rustbac_core::services::acknowledge_alarm::{EventState, TimeStamp};
 pub use rustbac_core::services::device_management::{DeviceCommunicationState, ReinitializeState};
 pub use rustbac_datalink::bip::transport::{BroadcastDistributionEntry, ForeignDeviceTableEntry};
 pub use schedule::{CalendarEntry, DateRange, TimeValue};
-pub use server::{BacnetServer, BacnetServiceError, ObjectStore, ObjectStoreHandler, ServiceHandler};
+pub use server::{
+    BacnetServer, BacnetServiceError, ObjectStore, ObjectStoreHandler, ServiceHandler,
+};
 pub use simulator::SimulatedDevice;
 pub use throttle::DeviceThrottle;
 pub use value::ClientDataValue;

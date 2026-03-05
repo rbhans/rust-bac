@@ -24,7 +24,6 @@ use rustbac_core::services::write_property::SERVICE_WRITE_PROPERTY;
 use rustbac_core::types::{ObjectId, PropertyId};
 use rustbac_datalink::{DataLink, DataLinkAddress};
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,22 +228,20 @@ impl<D: DataLink> BacnetServer<D> {
     /// - ConfirmedRequest WriteProperty (0x0F) → SimpleAck or Error.
     /// - ConfirmedRequest ReadPropertyMultiple (0x0E) → ComplexAck or Error.
     /// - Any other confirmed service → Reject (UNRECOGNIZED_SERVICE = 0x08).
-    pub fn serve(self) -> impl Future<Output = ()> {
-        async move {
-            let mut buf = [0u8; 1500];
-            loop {
-                let result = self.datalink.recv(&mut buf).await;
-                match result {
-                    Ok((n, source)) => {
-                        if let Err(e) = self.handle_frame(&buf[..n], source).await {
-                            log::debug!("server: error handling frame: {e:?}");
-                        }
+    pub async fn serve(self) {
+        let mut buf = [0u8; 1500];
+        loop {
+            let result = self.datalink.recv(&mut buf).await;
+            match result {
+                Ok((n, source)) => {
+                    if let Err(e) = self.handle_frame(&buf[..n], source).await {
+                        log::debug!("server: error handling frame: {e:?}");
                     }
-                    Err(e) => {
-                        log::debug!("server: datalink recv error: {e:?}");
-                        // On persistent transport errors avoid a tight busy loop.
-                        tokio::task::yield_now().await;
-                    }
+                }
+                Err(e) => {
+                    log::debug!("server: datalink recv error: {e:?}");
+                    // On persistent transport errors avoid a tight busy loop.
+                    tokio::task::yield_now().await;
                 }
             }
         }
@@ -308,8 +305,10 @@ impl<D: DataLink> BacnetServer<D> {
     }
 
     async fn send_i_am(&self, target: DataLinkAddress) {
-        let device_id_raw =
-            rustbac_core::types::ObjectId::new(rustbac_core::types::ObjectType::Device, self.device_id);
+        let device_id_raw = rustbac_core::types::ObjectId::new(
+            rustbac_core::types::ObjectType::Device,
+            self.device_id,
+        );
         let req = IAmRequest {
             device_id: device_id_raw,
             max_apdu: 1476,
@@ -449,12 +448,10 @@ impl<D: DataLink> BacnetServer<D> {
         // Optional priority [4].
         let priority = if !r.is_empty() {
             match Tag::decode(r) {
-                Ok(Tag::Context { tag_num: 4, len }) => {
-                    match decode_unsigned(r, len as usize) {
-                        Ok(p) => Some(p as u8),
-                        Err(_) => return,
-                    }
-                }
+                Ok(Tag::Context { tag_num: 4, len }) => match decode_unsigned(r, len as usize) {
+                    Ok(p) => Some(p as u8),
+                    Err(_) => return,
+                },
                 _ => None,
             }
         } else {
@@ -497,8 +494,9 @@ impl<D: DataLink> BacnetServer<D> {
         invoke_id: u8,
         source: DataLinkAddress,
     ) {
+        type PropRefs = Vec<(PropertyId, Option<u32>)>;
         // Collect all (object_id, [(property_id, array_index)]) specs from the request.
-        let mut specs: Vec<(ObjectId, Vec<(PropertyId, Option<u32>)>)> = Vec::new();
+        let mut specs: Vec<(ObjectId, PropRefs)> = Vec::new();
 
         while !r.is_empty() {
             // object-identifier [0]
@@ -524,12 +522,10 @@ impl<D: DataLink> BacnetServer<D> {
                     break;
                 }
                 let property_id = match tag {
-                    Tag::Context { tag_num: 0, len } => {
-                        match decode_unsigned(r, len as usize) {
-                            Ok(v) => PropertyId::from_u32(v),
-                            Err(_) => return,
-                        }
-                    }
+                    Tag::Context { tag_num: 0, len } => match decode_unsigned(r, len as usize) {
+                        Ok(v) => PropertyId::from_u32(v),
+                        Err(_) => return,
+                    },
                     _ => return,
                 };
 
@@ -607,7 +603,10 @@ impl<D: DataLink> BacnetServer<D> {
                     return;
                 }
 
-                match self.handler.read_property(*object_id, *property_id, *array_index) {
+                match self
+                    .handler
+                    .read_property(*object_id, *property_id, *array_index)
+                {
                     Ok(value) => {
                         let borrowed = client_value_to_borrowed(&value);
                         if encode_application_data_value(&mut w, &borrowed).is_err() {
@@ -890,7 +889,11 @@ mod tests {
         }
     }
 
-    fn make_server() -> (BacnetServer<MockDataLink>, Arc<Mutex<Vec<(DataLinkAddress, Vec<u8>)>>>, Arc<ObjectStore>) {
+    fn make_server() -> (
+        BacnetServer<MockDataLink>,
+        Arc<Mutex<Vec<(DataLinkAddress, Vec<u8>)>>>,
+        Arc<ObjectStore>,
+    ) {
         let store = Arc::new(ObjectStore::new());
         let device_id = ObjectId::new(ObjectType::Device, 42);
         store.set(
@@ -961,10 +964,7 @@ mod tests {
         encode_ctx_unsigned(&mut w, 0, device_id.raw()).unwrap();
         encode_ctx_unsigned(&mut w, 1, PropertyId::ObjectName.to_u32()).unwrap();
 
-        server
-            .handle_frame(w.as_written(), source())
-            .await
-            .unwrap();
+        server.handle_frame(w.as_written(), source()).await.unwrap();
 
         let sent = sent.lock().expect("poisoned");
         assert_eq!(sent.len(), 1);
@@ -1000,10 +1000,7 @@ mod tests {
         encode_ctx_unsigned(&mut w, 0, unknown.raw()).unwrap();
         encode_ctx_unsigned(&mut w, 1, PropertyId::PresentValue.to_u32()).unwrap();
 
-        server
-            .handle_frame(w.as_written(), source())
-            .await
-            .unwrap();
+        server.handle_frame(w.as_written(), source()).await.unwrap();
 
         let sent = sent.lock().expect("poisoned");
         assert_eq!(sent.len(), 1);
@@ -1045,10 +1042,7 @@ mod tests {
         encode_application_data_value(&mut w, &DataValue::CharacterString("NewName")).unwrap();
         Tag::Closing { tag_num: 3 }.encode(&mut w).unwrap();
 
-        server
-            .handle_frame(w.as_written(), source())
-            .await
-            .unwrap();
+        server.handle_frame(w.as_written(), source()).await.unwrap();
 
         // Verify SimpleAck was sent.
         let sent_frames = sent.lock().expect("poisoned");
@@ -1075,14 +1069,13 @@ mod tests {
         let mut w = Writer::new(&mut req_buf);
         Npdu::new(0).encode(&mut w).unwrap();
         // UnconfirmedRequest Who-Is (0x08) with no limits.
-        rustbac_core::apdu::UnconfirmedRequestHeader { service_choice: 0x08 }
-            .encode(&mut w)
-            .unwrap();
+        rustbac_core::apdu::UnconfirmedRequestHeader {
+            service_choice: 0x08,
+        }
+        .encode(&mut w)
+        .unwrap();
 
-        server
-            .handle_frame(w.as_written(), source())
-            .await
-            .unwrap();
+        server.handle_frame(w.as_written(), source()).await.unwrap();
 
         let sent = sent.lock().expect("poisoned");
         assert_eq!(sent.len(), 1);
@@ -1114,10 +1107,7 @@ mod tests {
         .encode(&mut w)
         .unwrap();
 
-        server
-            .handle_frame(w.as_written(), source())
-            .await
-            .unwrap();
+        server.handle_frame(w.as_written(), source()).await.unwrap();
 
         let sent = sent.lock().expect("poisoned");
         assert_eq!(sent.len(), 1);

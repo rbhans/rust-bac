@@ -2,11 +2,8 @@
 use libfuzzer_sys::fuzz_target;
 use rustbac_core::encoding::reader::Reader;
 use rustbac_core::services::{
-    alarm_summary::GetAlarmSummaryAck,
-    cov_notification::CovNotificationRequest,
-    event_notification::EventNotificationRequest,
-    i_am::IAmRequest,
-    read_property::ReadPropertyAck,
+    alarm_summary::GetAlarmSummaryAck, cov_notification::CovNotificationRequest,
+    event_notification::EventNotificationRequest, i_am::IAmRequest, read_property::ReadPropertyAck,
     read_property_multiple::ReadPropertyMultipleAck,
 };
 

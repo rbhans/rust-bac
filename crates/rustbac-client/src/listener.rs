@@ -99,12 +99,13 @@ pub fn create_notification_listener_with_capacity<D: DataLink + 'static>(
                     // growing the queue without bound. Break only when the
                     // receiver has been dropped; a full channel just discards
                     // this notification.
-                    if tx.try_send(notification).is_err() {
-                        if tx.is_closed() {
-                            break; // receiver dropped
+                    match tx.try_send(notification) {
+                        Ok(()) => {}
+                        Err(_) if tx.is_closed() => break, // receiver dropped
+                        Err(_) => {
+                            #[cfg(feature = "tracing")]
+                            tracing::warn!("notification channel full — dropping notification");
                         }
-                        #[cfg(feature = "tracing")]
-                        tracing::warn!("notification channel full — dropping notification");
                     }
                 }
             }

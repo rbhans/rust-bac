@@ -264,8 +264,8 @@ impl PropertyId {
     }
 }
 
-impl std::fmt::Display for PropertyId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for PropertyId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::AckedTransitions => f.write_str("acked-transitions"),
             Self::ActiveText => f.write_str("active-text"),

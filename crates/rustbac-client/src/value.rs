@@ -28,10 +28,7 @@ pub enum ClientDataValue {
     ///
     /// `unused_bits` is the number of padding bits in the last byte of `data` that are not
     /// part of the logical bit string (0–7).
-    BitString {
-        unused_bits: u8,
-        data: Vec<u8>,
-    },
+    BitString { unused_bits: u8, data: Vec<u8> },
     /// BACnet Enumerated value — the raw numeric discriminant.
     Enumerated(u32),
     /// BACnet Date.

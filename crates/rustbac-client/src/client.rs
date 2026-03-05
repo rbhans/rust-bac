@@ -1977,26 +1977,45 @@ impl<D: DataLink> BacnetClient<D> {
         let mut grouped: Vec<(ObjectId, Vec<PropertyReference>)> = Vec::new();
         for &(oid, pid) in requests {
             if let Some(entry) = grouped.iter_mut().find(|(o, _)| *o == oid) {
-                entry.1.push(PropertyReference { property_id: pid, array_index: None });
+                entry.1.push(PropertyReference {
+                    property_id: pid,
+                    array_index: None,
+                });
             } else {
-                grouped.push((oid, vec![PropertyReference { property_id: pid, array_index: None }]));
+                grouped.push((
+                    oid,
+                    vec![PropertyReference {
+                        property_id: pid,
+                        array_index: None,
+                    }],
+                ));
             }
         }
 
         let specs: Vec<ReadAccessSpecification<'_>> = grouped
             .iter()
-            .map(|(oid, props)| ReadAccessSpecification { object_id: *oid, properties: props })
+            .map(|(oid, props)| ReadAccessSpecification {
+                object_id: *oid,
+                properties: props,
+            })
             .collect();
 
         let invoke_id = self.next_invoke_id().await;
-        let req = ReadPropertyMultipleRequest { specs: &specs, invoke_id };
+        let req = ReadPropertyMultipleRequest {
+            specs: &specs,
+            invoke_id,
+        };
         let tx = self.encode_with_growth(|w| {
             Npdu::new(0).encode(w)?;
             req.encode(w)
         })?;
         let payload = self
             .await_complex_ack_payload_or_error(
-                address, &tx, invoke_id, SERVICE_READ_PROPERTY_MULTIPLE, self.response_timeout,
+                address,
+                &tx,
+                invoke_id,
+                SERVICE_READ_PROPERTY_MULTIPLE,
+                self.response_timeout,
             )
             .await?;
 
@@ -2036,9 +2055,10 @@ impl<D: DataLink> BacnetClient<D> {
                 ClientDataValue::Double(f) => DV::Double(*f),
                 ClientDataValue::OctetString(b) => DV::OctetString(b),
                 ClientDataValue::CharacterString(s) => DV::CharacterString(s),
-                ClientDataValue::BitString { unused_bits, data } => {
-                    DV::BitString(BitString { unused_bits: *unused_bits, data })
-                }
+                ClientDataValue::BitString { unused_bits, data } => DV::BitString(BitString {
+                    unused_bits: *unused_bits,
+                    data,
+                }),
                 ClientDataValue::Enumerated(n) => DV::Enumerated(*n),
                 ClientDataValue::Date(d) => DV::Date(*d),
                 ClientDataValue::Time(t) => DV::Time(*t),
@@ -2074,17 +2094,27 @@ impl<D: DataLink> BacnetClient<D> {
 
         let specs: Vec<WriteAccessSpecification<'_>> = grouped
             .iter()
-            .map(|(oid, props)| WriteAccessSpecification { object_id: *oid, properties: props })
+            .map(|(oid, props)| WriteAccessSpecification {
+                object_id: *oid,
+                properties: props,
+            })
             .collect();
 
         let invoke_id = self.next_invoke_id().await;
-        let req = WritePropertyMultipleRequest { specs: &specs, invoke_id };
+        let req = WritePropertyMultipleRequest {
+            specs: &specs,
+            invoke_id,
+        };
         let tx = self.encode_with_growth(|w| {
             Npdu::new(0).encode(w)?;
             req.encode(w)
         })?;
         self.await_simple_ack_or_error(
-            address, &tx, invoke_id, SERVICE_WRITE_PROPERTY_MULTIPLE, self.response_timeout,
+            address,
+            &tx,
+            invoke_id,
+            SERVICE_WRITE_PROPERTY_MULTIPLE,
+            self.response_timeout,
         )
         .await
     }

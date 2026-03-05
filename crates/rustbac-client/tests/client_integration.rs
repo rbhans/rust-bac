@@ -7,9 +7,7 @@
 //! responses, COV notifications) spin a small ad-hoc responder task on the
 //! server link.
 
-use rustbac_client::{
-    BacnetClient, ClientDataValue, ClientError, Notification, SimulatedDevice,
-};
+use rustbac_client::{BacnetClient, ClientDataValue, ClientError, Notification, SimulatedDevice};
 use rustbac_core::{
     apdu::{ApduType, ComplexAckHeader, ConfirmedRequestHeader, SimpleAck},
     encoding::{
@@ -162,8 +160,8 @@ async fn test_read_property() {
     // Run the simulator in the background.
     tokio::spawn(async move { sim.run().await });
 
-    let client = BacnetClient::with_datalink(client_link)
-        .with_response_timeout(Duration::from_secs(5));
+    let client =
+        BacnetClient::with_datalink(client_link).with_response_timeout(Duration::from_secs(5));
 
     let object_id = ObjectId::new(ObjectType::AnalogInput, 1);
     let result = timeout(
@@ -191,8 +189,8 @@ async fn test_write_property() {
     let sim = make_simulator(server_link).await;
     tokio::spawn(async move { sim.run().await });
 
-    let client = BacnetClient::with_datalink(client_link)
-        .with_response_timeout(Duration::from_secs(5));
+    let client =
+        BacnetClient::with_datalink(client_link).with_response_timeout(Duration::from_secs(5));
 
     let ao_id = ObjectId::new(ObjectType::AnalogOutput, 1);
 
@@ -311,8 +309,8 @@ async fn test_read_property_multiple() {
         }
     });
 
-    let client = BacnetClient::with_datalink(client_link)
-        .with_response_timeout(Duration::from_secs(5));
+    let client =
+        BacnetClient::with_datalink(client_link).with_response_timeout(Duration::from_secs(5));
 
     let props = [PropertyId::ObjectName, PropertyId::PresentValue];
     let result = timeout(
@@ -376,11 +374,7 @@ async fn test_who_is_discovers_device() {
         inp: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
     }
     impl DataLink for WhoIsClientLink {
-        async fn send(
-            &self,
-            _addr: DataLinkAddress,
-            payload: &[u8],
-        ) -> Result<(), DataLinkError> {
+        async fn send(&self, _addr: DataLinkAddress, payload: &[u8]) -> Result<(), DataLinkError> {
             self.out
                 .send(payload.to_vec())
                 .await
@@ -465,8 +459,8 @@ async fn test_who_is_discovers_device() {
         inp: Arc::new(Mutex::new(iam_rx)),
     };
 
-    let client = BacnetClient::with_datalink(client_link)
-        .with_response_timeout(Duration::from_secs(5));
+    let client =
+        BacnetClient::with_datalink(client_link).with_response_timeout(Duration::from_secs(5));
 
     let devices = timeout(
         Duration::from_secs(5),
@@ -599,10 +593,7 @@ async fn test_subscribe_cov_then_notify() {
         other => panic!("expected COV notification, got {other:?}"),
     };
 
-    assert_eq!(
-        cov.monitored_object_id, ai_id,
-        "monitored object mismatch"
-    );
+    assert_eq!(cov.monitored_object_id, ai_id, "monitored object mismatch");
     let pv = cov
         .values
         .iter()
@@ -651,8 +642,8 @@ async fn test_device_communication_control() {
         server_link.send(CLIENT_ADDR, &ack).await.unwrap();
     });
 
-    let client = BacnetClient::with_datalink(client_link)
-        .with_response_timeout(Duration::from_secs(5));
+    let client =
+        BacnetClient::with_datalink(client_link).with_response_timeout(Duration::from_secs(5));
 
     let result = timeout(
         Duration::from_secs(5),
@@ -666,7 +657,10 @@ async fn test_device_communication_control() {
     .await
     .expect("test timed out");
 
-    assert!(result.is_ok(), "device_communication_control failed: {result:?}");
+    assert!(
+        result.is_ok(),
+        "device_communication_control failed: {result:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -706,11 +700,8 @@ async fn test_segmented_read() {
             encode_ctx_unsigned(&mut w, 0, object_id.raw()).unwrap();
             encode_ctx_unsigned(&mut w, 1, PropertyId::Description.to_u32()).unwrap();
             Tag::Opening { tag_num: 3 }.encode(&mut w).unwrap();
-            encode_application_data_value(
-                &mut w,
-                &DataValue::CharacterString(&large_string_clone),
-            )
-            .unwrap();
+            encode_application_data_value(&mut w, &DataValue::CharacterString(&large_string_clone))
+                .unwrap();
             Tag::Closing { tag_num: 3 }.encode(&mut w).unwrap();
             w.as_written().len()
         };
@@ -778,8 +769,8 @@ async fn test_segmented_read() {
         // need to receive it, since ChannelLink::send() is fire-and-forget.
     });
 
-    let client = BacnetClient::with_datalink(client_link)
-        .with_response_timeout(Duration::from_secs(5));
+    let client =
+        BacnetClient::with_datalink(client_link).with_response_timeout(Duration::from_secs(5));
 
     let object_id = ObjectId::new(ObjectType::AnalogInput, 1);
     let result = timeout(
@@ -813,17 +804,10 @@ async fn test_timeout_on_no_response() {
         _sink: mpsc::Sender<Vec<u8>>,
     }
     impl DataLink for SilentLink {
-        async fn send(
-            &self,
-            _addr: DataLinkAddress,
-            _payload: &[u8],
-        ) -> Result<(), DataLinkError> {
+        async fn send(&self, _addr: DataLinkAddress, _payload: &[u8]) -> Result<(), DataLinkError> {
             Ok(())
         }
-        async fn recv(
-            &self,
-            _buf: &mut [u8],
-        ) -> Result<(usize, DataLinkAddress), DataLinkError> {
+        async fn recv(&self, _buf: &mut [u8]) -> Result<(usize, DataLinkAddress), DataLinkError> {
             // Park forever — the client's own deadline will fire.
             tokio::time::sleep(Duration::from_secs(600)).await;
             Err(DataLinkError::InvalidFrame)
@@ -834,8 +818,8 @@ async fn test_timeout_on_no_response() {
     let link = SilentLink { _sink: sink };
 
     // Short timeout so the test finishes quickly.
-    let client = BacnetClient::with_datalink(link)
-        .with_response_timeout(Duration::from_millis(200));
+    let client =
+        BacnetClient::with_datalink(link).with_response_timeout(Duration::from_millis(200));
 
     let object_id = ObjectId::new(ObjectType::AnalogInput, 1);
     let result = timeout(

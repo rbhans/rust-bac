@@ -13,7 +13,7 @@ fn parse_object_type(s: &str) -> Result<ObjectType, String> {
         return Ok(ObjectType::from_u16(n));
     }
     // Try name (case-insensitive, accept kebab-case or PascalCase)
-    let normalized = s.to_ascii_lowercase().replace('-', "").replace('_', "");
+    let normalized = s.to_ascii_lowercase().replace(['-', '_'], "");
     let ot = match normalized.as_str() {
         "analoginput" => ObjectType::AnalogInput,
         "analogoutput" => ObjectType::AnalogOutput,
@@ -55,7 +55,7 @@ fn parse_property_id(s: &str) -> Result<PropertyId, String> {
     if let Ok(n) = s.parse::<u32>() {
         return Ok(PropertyId::from_u32(n));
     }
-    let normalized = s.to_ascii_lowercase().replace('-', "").replace('_', "");
+    let normalized = s.to_ascii_lowercase().replace(['-', '_'], "");
     let pid = match normalized.as_str() {
         "ackedtransitions" => PropertyId::AckedTransitions,
         "activetext" => PropertyId::ActiveText,

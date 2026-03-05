@@ -1,14 +1,14 @@
 # rust-bac
 
-Rust BACnet/IP workspace with a `no_std` core encoder/decoder, async BACnet/IP transport, high-level client API, and CLI tools.
+Rust BACnet/IP workspace with a `no_std` core encoder/decoder, async BACnet/IP transport, high-level client API, server/responder scaffolding, and CLI tools.
 
 ## Crates
 
 - `crates/rustbac-core`: BACnet encoding, NPDU/APDU, types, and service payloads.
 - `crates/rustbac-datalink`: BACnet/IP datalink (BVLC/BIP), BBMD/FDR helpers.
 - `crates/rustbac-bacnet-sc`: BACnet/SC WebSocket transport adapter (ws/wss backend wiring).
-- `crates/rustbac-client`: high-level async client API.
-- `crates/rustbac-tools`: CLI binaries (`whois`, `whohas`, `readprop`, `writeprop`, `subcov`, `readrange`, `readfile`, `writefile`, `dcc`, `reinit`, `timesync`, `ackalarm`, `alarmsummary`, `enrollsummary`, `eventinfo`, `eventnotify`, `readbdt`, `writebdt`, `readfdt`, `deletefdt`, `createobj`, `deleteobj`, `addlist`, `removelist`, `listen`, `privatetransfer`, `simulator`, `walkdevice`).
+- `crates/rustbac-client`: high-level async client API, COV manager, server scaffolding.
+- `crates/rustbac-tools`: CLI binaries (`whois`, `whohas`, `readprop`, `writeprop`, `writepropms`, `subcov`, `readrange`, `readfile`, `writefile`, `dcc`, `reinit`, `timesync`, `ackalarm`, `alarmsummary`, `enrollsummary`, `eventinfo`, `eventnotify`, `readbdt`, `writebdt`, `readfdt`, `deletefdt`, `createobj`, `deleteobj`, `addlist`, `removelist`, `listen`, `privatetransfer`, `simulator`, `walkdevice`).
 
 ## Quick Start
 
@@ -25,6 +25,7 @@ cargo run -p rustbac-tools --bin whois -- --help
 cargo run -p rustbac-tools --bin whohas -- --help
 cargo run -p rustbac-tools --bin readprop -- --help
 cargo run -p rustbac-tools --bin writeprop -- --help
+cargo run -p rustbac-tools --bin writepropms -- --help
 cargo run -p rustbac-tools --bin subcov -- --help
 cargo run -p rustbac-tools --bin readrange -- --help
 cargo run -p rustbac-tools --bin readfile -- --help
@@ -53,10 +54,13 @@ cargo run -p rustbac-tools --bin walkdevice -- --help
 
 ## Current Highlights
 
-- Who-Is / I-Am discovery
+### Protocol services
+
+- Who-Is / I-Am discovery (deduplication by device instance, not source address)
 - Who-Has / I-Have object discovery
 - Read/Write Property
 - Read/Write Property Multiple
+- `read_many` / `write_many` convenience helpers (batch read/write in a single round-trip)
 - ReadRange (by-position, by-sequence, by-time)
 - Atomic Read File (stream + record)
 - Atomic Write File (stream + record)
@@ -65,31 +69,60 @@ cargo run -p rustbac-tools --bin walkdevice -- --help
 - Subscribe COV and Subscribe COV Property
 - COV notification handling (confirmed + unconfirmed)
 - Event notification handling (confirmed + unconfirmed)
-- Event/Alarm services:
-  - AcknowledgeAlarm
-  - GetAlarmSummary
-  - GetEnrollmentSummary
-  - GetEventInformation
-- Device management services:
-  - DeviceCommunicationControl
-  - ReinitializeDevice
-- Time synchronization services:
-  - TimeSynchronization
-  - UTCTimeSynchronization
-- Segmented ComplexAck reassembly
-- Duplicate segmented ComplexAck tolerance during reassembly
-- Segmented confirmed-request transmit (for oversized confirmed requests, configurable window + bounded retransmit retries)
-- Confirmed-service receive loops tolerate transient invalid frames while awaiting responses
-- Foreign Device Registration + BBMD table operations (BDT/FDT)
+- Event/Alarm services: AcknowledgeAlarm, GetAlarmSummary, GetEnrollmentSummary, GetEventInformation
+- Device management: DeviceCommunicationControl, ReinitializeDevice
+- Time synchronization: TimeSynchronization, UTCTimeSynchronization
 - ConfirmedPrivateTransfer (vendor-specific service invocation)
-- Device walk (enumerate all objects and properties on a device)
-- Simulated BACnet device for testing (`SimulatedDevice`)
-- Async notification listener for COV and event notifications (`NotificationListener`)
-- BBMD/FDR admin CLI tools (`readbdt`, `writebdt`, `readfdt`, `deletefdt`)
-- BACnet/SC websocket transport (`BacnetScTransport`, `BacnetClient::new_sc`)
-- Typed remote BACnet error detail mapping (class/code when present)
+- Foreign Device Registration + BBMD table operations (BDT/FDT)
+
+### Segmentation
+
+- Segmented ComplexAck reassembly with duplicate-segment tolerance
+- Segmented confirmed-request transmit (configurable window, bounded retransmit retries)
+- Adaptive segment window: default window size 16; server-side SegmentAck proposals honoured
+- Device capability caching: `MaxAPDU` from I-Am responses is cached and used to right-size segments for each peer
+
+### Transports
+
+- BACnet/IP (UDP/BVLC) with BBMD/FDR support
+- BACnet/SC WebSocket transport (`BacnetScTransport`, `BacnetClient::new_sc`) with concurrent-recv safety via broadcast fan-out
+
+### Server/responder
+
+- `BacnetServer` trait + `ObjectStore` in-memory property store
+- Handles ReadProperty, WriteProperty, ReadPropertyMultiple, Who-Is → I-Am, unknown services → Reject
+
+### COV manager
+
+- `CovManager` background manager: automatic renewal, silent-subscription detection, polling fallback
+- Silent subscription detection correctly anchored to first-subscribe time — renewals do not reset the silence window
+
+### Observability
+
+- `tracing` feature flag: spans/events for confirmed-request lifecycle (invoke ID, service choice, peer address)
+- Confirmed-service receive loops tolerate transient invalid frames
+
+### Types & ergonomics
+
+- `PropertyId::from_name("present-value")` and `impl Display for PropertyId` (hyphenated BACnet names)
+- `ObjectType::from_name("analog-input")` and `impl Display for ObjectType`
+- Typed remote BACnet error detail mapping (class + code enums when recognised)
+- `serde` feature flag on all public types
+
+### Testing & quality
+
+- End-to-end integration tests against an in-memory `SimulatedDevice` (8 scenarios)
 - Golden packet fixtures in `crates/rustbac-core/tests/golden_packets.rs`
-- Golden corpus fixture loader test in `crates/rustbac-core/tests/golden_corpus.rs` (loads `fixtures/golden/*.hex`)
+- Golden corpus fixture loader in `crates/rustbac-core/tests/golden_corpus.rs`
+- `cargo fuzz` harness with 4 targets (`fuzz_npdu_decode`, `fuzz_apdu_confirmed_decode`, `fuzz_bvlc_decode`, `fuzz_service_decode`)
+- BBMD admin race fixed: all BBMD admin methods hold `request_io_lock`
+- NPDU encoder derives control bits from option fields (no more mismatched headers)
+- Bounded notification channel (256 default) with backpressure; segmented confirmed notifications rejected with Abort PDU
+
+### CLI tools
+
+- All services above available as standalone binaries in `rustbac-tools`
+- `writepropms`: batch write multiple properties in a single WritePropertyMultiple call
 
 ## Delivery Docs
 

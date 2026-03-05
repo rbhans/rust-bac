@@ -108,7 +108,10 @@ impl<D: DataLink + 'static> CovManagerBuilder<D> {
         self
     }
 
-    pub fn build(self) -> CovManager {
+    pub fn build(self) -> Result<CovManager, crate::ClientError> {
+        let runtime_handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| crate::ClientError::NoTokioRuntime)?;
+
         let (tx, rx) = mpsc::unbounded_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let poll_interval = self.poll_interval.max(Duration::from_millis(1));
@@ -116,7 +119,6 @@ impl<D: DataLink + 'static> CovManagerBuilder<D> {
         let renewal_fraction = sanitize_fraction(self.renewal_fraction);
         let client = self.client;
         let subscriptions = self.subscriptions;
-        let runtime_handle = tokio::runtime::Handle::current();
 
         let thread = std::thread::spawn(move || {
             runtime_handle.block_on(async move {
@@ -132,11 +134,11 @@ impl<D: DataLink + 'static> CovManagerBuilder<D> {
                 .await;
             });
         });
-        CovManager {
+        Ok(CovManager {
             thread: Some(thread),
             shutdown: shutdown_tx,
             rx,
-        }
+        })
     }
 }
 
@@ -150,7 +152,13 @@ enum SubscriptionMode {
 struct SubscriptionState {
     spec: CovSubscriptionSpec,
     mode: SubscriptionMode,
+    /// Set when an actual COV notification is received (not on subscribe).
     last_notification: Option<Instant>,
+    /// Set when the subscription first transitions into Cov mode; used as the
+    /// silence reference when no notification has been received yet.  Reset to
+    /// `None` when the subscription transitions to Polling mode so that a
+    /// later re-subscribe starts a fresh silence window.
+    cov_mode_since: Option<Instant>,
     next_renewal: Instant,
     next_poll: Instant,
 }
@@ -167,6 +175,7 @@ impl SubscriptionState {
             spec,
             mode: SubscriptionMode::Cov,
             last_notification: None,
+            cov_mode_since: None,
             next_renewal: now + renewal_delay_seconds(lifetime_seconds, renewal_fraction),
             next_poll: now + poll_interval,
         }
@@ -178,8 +187,18 @@ impl SubscriptionState {
         renewal_fraction: f64,
         poll_interval: Duration,
     ) {
+        // Record when we first enter (or re-enter) Cov mode so the silence
+        // window is anchored to the original subscription, not to each renewal.
+        // Also set it if it was cleared by a prior on_subscribe_failure.
+        if self.mode != SubscriptionMode::Cov || self.cov_mode_since.is_none() {
+            self.cov_mode_since = Some(now);
+        }
         self.mode = SubscriptionMode::Cov;
-        self.last_notification = Some(now);
+        // NOTE: last_notification is intentionally NOT updated here.  It is
+        // only set when an actual COV notification arrives from the device.
+        // Resetting it on every SimpleAck would prevent the silence detector
+        // from discovering that the device accepted the subscription but is
+        // not sending any notifications.
         self.next_renewal =
             now + renewal_delay_seconds(self.spec.lifetime_seconds, renewal_fraction);
         self.next_poll = now + poll_interval;
@@ -187,17 +206,27 @@ impl SubscriptionState {
 
     fn on_subscribe_failure(&mut self, now: Instant, renewal_fraction: f64) {
         self.mode = SubscriptionMode::Polling;
+        // Reset so a later re-subscribe starts a fresh silence window.
+        self.cov_mode_since = None;
         self.next_renewal =
             now + renewal_delay_seconds(self.spec.lifetime_seconds, renewal_fraction);
         self.next_poll = now;
     }
 
+    /// Returns `true` when the subscription is in Cov mode but no notification
+    /// has been received within `threshold` of the last notification (or of
+    /// when the subscription was established if none has ever been received).
     fn is_silent(&self, now: Instant, threshold: Duration) -> bool {
-        self.mode == SubscriptionMode::Cov
-            && self
-                .last_notification
-                .map(|last| now.saturating_duration_since(last) > threshold)
-                .unwrap_or(false)
+        if self.mode != SubscriptionMode::Cov {
+            return false;
+        }
+        // Use the most recent notification as reference, falling back to when
+        // we first entered Cov mode.  If neither is set the subscription was
+        // just created and the silence window hasn't started yet.
+        let reference = self.last_notification.or(self.cov_mode_since);
+        reference
+            .map(|t| now.saturating_duration_since(t) > threshold)
+            .unwrap_or(false)
     }
 }
 
@@ -502,7 +531,45 @@ mod tests {
 
         state.on_subscribe_success(now, 0.75, Duration::from_secs(1));
         assert_eq!(state.mode, SubscriptionMode::Cov);
-        assert_eq!(state.last_notification, Some(now));
+        // last_notification is NOT set by on_subscribe_success — only by real notifications.
+        assert_eq!(state.last_notification, Some(now - Duration::from_secs(10)));
+        // cov_mode_since is set on the Polling→Cov transition.
+        assert_eq!(state.cov_mode_since, Some(now));
+    }
+
+    /// A device that accepts subscriptions but never sends notifications should
+    /// be detected as silent and not have its silence window reset by renewals.
+    #[test]
+    fn silence_detected_when_no_notifications_ever_received() {
+        let spec = CovSubscriptionSpec {
+            address: DataLinkAddress::Ip(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 47830)),
+            object_id: ObjectId::new(ObjectType::AnalogInput, 1),
+            property_id: None,
+            lifetime_seconds: 60,
+            cov_increment: None,
+            confirmed: false,
+            subscriber_process_id: 1,
+        };
+        let t0 = Instant::now();
+        let mut state = SubscriptionState::new(spec, Duration::from_secs(30), 0.75, t0);
+
+        // Simulate initial subscribe succeeding (SimpleAck received).
+        state.on_subscribe_success(t0, 0.75, Duration::from_secs(30));
+        assert_eq!(state.mode, SubscriptionMode::Cov);
+        assert_eq!(state.last_notification, None); // no real notification yet
+        assert_eq!(state.cov_mode_since, Some(t0));
+
+        // No notification received — but cov_mode_since is set so silence is detectable.
+        let threshold = Duration::from_secs(5 * 60);
+        let t_later = t0 + threshold + Duration::from_secs(1);
+        assert!(state.is_silent(t_later, threshold));
+
+        // A renewal (another SimpleAck) must NOT reset the silence window.
+        state.on_subscribe_success(t_later, 0.75, Duration::from_secs(30));
+        assert!(
+            state.is_silent(t_later, threshold),
+            "silence window must not be reset by renewal"
+        );
     }
 
     #[test]
@@ -576,7 +643,8 @@ mod tests {
             .subscribe(spec)
             .poll_interval(Duration::from_millis(75))
             .silence_threshold(Duration::from_millis(200))
-            .build();
+            .build()
+            .expect("build() failed: no Tokio runtime");
 
         let update = timeout(Duration::from_secs(2), manager.recv())
             .await

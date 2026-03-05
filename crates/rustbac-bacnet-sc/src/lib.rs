@@ -11,20 +11,46 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::net::lookup_host;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 const CHANNEL_DEPTH: usize = 128;
+/// Broadcast channel capacity for inbound frames.
+///
+/// Each concurrent `recv()` caller subscribes independently and receives every
+/// frame. Frames are discarded from a subscriber's queue if it falls more than
+/// `BROADCAST_DEPTH` frames behind; callers that loop on `recv()` will
+/// recover automatically on the next iteration.
+const BROADCAST_DEPTH: usize = 64;
 
 /// A [`DataLink`] implementation that transports BACnet frames over a
 /// WebSocket connection (BACnet/SC).
-#[derive(Debug, Clone)]
+///
+/// ## Concurrent receive safety
+///
+/// Unlike a UDP socket, a single WebSocket connection delivers frames
+/// sequentially. To avoid frame stealing between concurrent `recv()` callers
+/// (e.g. a `who_is` discovery loop and a confirmed-request response loop
+/// running in the same task via `tokio::select!`), inbound frames are
+/// published through a [`broadcast`] channel so that **every** concurrent
+/// caller sees every frame and discards what it doesn't need.
+#[derive(Clone)]
 pub struct BacnetScTransport {
     endpoint: String,
     peer_address: DataLinkAddress,
     outbound: mpsc::Sender<Vec<u8>>,
-    inbound: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
+    /// Broadcast sender; each `recv()` call subscribes to get its own stream.
+    inbound: Arc<broadcast::Sender<Vec<u8>>>,
+}
+
+impl std::fmt::Debug for BacnetScTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BacnetScTransport")
+            .field("endpoint", &self.endpoint)
+            .field("peer_address", &self.peer_address)
+            .finish()
+    }
 }
 
 impl BacnetScTransport {
@@ -38,7 +64,9 @@ impl BacnetScTransport {
         let (mut writer, mut reader) = socket.split();
 
         let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_DEPTH);
-        let (inbound_tx, inbound_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_DEPTH);
+        let (inbound_tx, _) = broadcast::channel::<Vec<u8>>(BROADCAST_DEPTH);
+        let inbound_tx = Arc::new(inbound_tx);
+        let inbound_tx_clone = inbound_tx.clone();
 
         tokio::spawn(async move {
             while let Some(frame) = outbound_rx.recv().await {
@@ -58,9 +86,9 @@ impl BacnetScTransport {
 
                 match message {
                     Message::Binary(payload) => {
-                        if inbound_tx.send(payload.to_vec()).await.is_err() {
-                            break;
-                        }
+                        // If no receivers are subscribed yet the send fails
+                        // silently — the caller will wait and retry.
+                        let _ = inbound_tx_clone.send(payload.to_vec());
                     }
                     Message::Text(text) => {
                         log::debug!("ignoring non-binary BACnet/SC websocket frame: {text}");
@@ -74,7 +102,7 @@ impl BacnetScTransport {
             endpoint,
             peer_address,
             outbound: outbound_tx,
-            inbound: Arc::new(Mutex::new(inbound_rx)),
+            inbound: inbound_tx,
         })
     }
 
@@ -98,18 +126,34 @@ impl DataLink for BacnetScTransport {
     }
 
     async fn recv(&self, buf: &mut [u8]) -> Result<(usize, DataLinkAddress), DataLinkError> {
-        let mut inbound = self.inbound.lock().await;
-        let payload = inbound.recv().await.ok_or_else(|| {
-            DataLinkError::Io(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "BACnet/SC websocket receiver task stopped",
-            ))
-        })?;
-        if payload.len() > buf.len() {
-            return Err(DataLinkError::FrameTooLarge);
+        // Subscribe before entering the wait loop so no frame sent after this
+        // point can be missed.  Frames published before subscribe() are not
+        // delivered, but the caller's retry loop handles that gracefully.
+        let mut rx = self.inbound.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(payload) => {
+                    if payload.len() > buf.len() {
+                        return Err(DataLinkError::FrameTooLarge);
+                    }
+                    buf[..payload.len()].copy_from_slice(&payload);
+                    return Ok((payload.len(), self.peer_address));
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    // This subscriber fell behind; some frames were dropped.
+                    // Skip past them and try again — the request loop will
+                    // time out if the frame we need never arrives.
+                    log::debug!("BACnet/SC recv lagged by {n} frames; skipping");
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(DataLinkError::Io(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "BACnet/SC websocket receiver task stopped",
+                    )));
+                }
+            }
         }
-        buf[..payload.len()].copy_from_slice(&payload);
-        Ok((payload.len(), self.peer_address))
     }
 }
 

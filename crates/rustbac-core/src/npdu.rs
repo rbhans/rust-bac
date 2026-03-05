@@ -42,8 +42,27 @@ impl Npdu {
     }
 
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
+        // Derive control bits from optional fields so the header is always
+        // consistent, regardless of what the caller set in `self.control`.
+        let mut control = self.control;
+        if self.destination.is_some() {
+            control |= 0x20;
+        } else {
+            control &= !0x20;
+        }
+        if self.source.is_some() {
+            control |= 0x08;
+        } else {
+            control &= !0x08;
+        }
+        if self.message_type.is_some() {
+            control |= 0x80;
+        } else {
+            control &= !0x80;
+        }
+
         w.write_u8(NPDU_VERSION)?;
-        w.write_u8(self.control)?;
+        w.write_u8(control)?;
 
         if let Some(dest) = self.destination {
             encode_addr(w, dest)?;
@@ -54,9 +73,9 @@ impl Npdu {
         if self.destination.is_some() {
             w.write_u8(self.hop_count.unwrap_or(255))?;
         }
-        if (self.control & 0x80) != 0 {
-            w.write_u8(self.message_type.unwrap_or(0))?;
-            if matches!(self.message_type, Some(0x80..=0xFF)) {
+        if let Some(mt) = self.message_type {
+            w.write_u8(mt)?;
+            if mt >= 0x80 {
                 w.write_be_u16(self.vendor_id.unwrap_or(0))?;
             }
         }

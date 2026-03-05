@@ -250,7 +250,23 @@ pub struct AbortPdu {
     pub reason: u8,
 }
 
+/// BACnet Abort reason codes.
+pub mod abort_reason {
+    /// The peer does not support segmented messages.
+    pub const SEGMENTATION_NOT_SUPPORTED: u8 = 0x04;
+}
+
 impl AbortPdu {
+    pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
+        let mut b0 = (ApduType::Abort as u8) << 4;
+        if self.server {
+            b0 |= 0x01;
+        }
+        w.write_u8(b0)?;
+        w.write_u8(self.invoke_id)?;
+        w.write_u8(self.reason)
+    }
+
     pub fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let b0 = r.read_u8()?;
         if (b0 >> 4) != ApduType::Abort as u8 {

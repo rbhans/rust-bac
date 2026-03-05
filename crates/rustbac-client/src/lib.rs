@@ -27,6 +27,8 @@ pub mod point;
 pub mod range;
 /// Schedule and Calendar convenience helpers.
 pub mod schedule;
+/// BACnet server/responder implementation.
+pub mod server;
 /// Lightweight simulated BACnet device.
 pub mod simulator;
 /// Per-device request throttling utility.
@@ -56,6 +58,7 @@ pub use rustbac_core::services::acknowledge_alarm::{EventState, TimeStamp};
 pub use rustbac_core::services::device_management::{DeviceCommunicationState, ReinitializeState};
 pub use rustbac_datalink::bip::transport::{BroadcastDistributionEntry, ForeignDeviceTableEntry};
 pub use schedule::{CalendarEntry, DateRange, TimeValue};
+pub use server::{BacnetServer, BacnetServiceError, ObjectStore, ObjectStoreHandler, ServiceHandler};
 pub use simulator::SimulatedDevice;
 pub use throttle::DeviceThrottle;
 pub use value::ClientDataValue;

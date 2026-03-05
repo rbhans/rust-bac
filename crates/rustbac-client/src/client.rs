@@ -83,8 +83,9 @@ use rustbac_datalink::bip::transport::{
     BacnetIpTransport, BroadcastDistributionEntry, ForeignDeviceTableEntry,
 };
 use rustbac_datalink::{DataLink, DataLinkAddress, DataLinkError};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::RwLock;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -93,6 +94,21 @@ use tokio::time::{timeout, Instant};
 const MIN_SEGMENT_DATA_LEN: usize = 32;
 const MAX_COMPLEX_ACK_REASSEMBLY_BYTES: usize = 1024 * 1024;
 
+/// High-level async BACnet client.
+///
+/// `BacnetClient<D>` wraps any [`DataLink`] transport and exposes ergonomic methods for common
+/// BACnet operations: reading and writing properties, device and object discovery, COV
+/// subscriptions, alarm/event services, file I/O, and device management.
+///
+/// The invoke-id counter and the per-request I/O lock are stored behind `Mutex`es, so the
+/// client is intentionally not `Clone` — wrap it in an `Arc` to share it across tasks.
+///
+/// # Construction
+///
+/// - UDP/IP: [`BacnetClient::new()`] (local broadcast) or [`BacnetClient::new_foreign()`]
+///   (register as a foreign device with a BBMD).
+/// - BACnet/SC (WebSocket): [`BacnetClient::new_sc()`].
+/// - Custom transport: [`BacnetClient::with_datalink()`].
 #[derive(Debug)]
 pub struct BacnetClient<D: DataLink> {
     datalink: D,
@@ -102,14 +118,22 @@ pub struct BacnetClient<D: DataLink> {
     segmented_request_window_size: u8,
     segmented_request_retries: u8,
     segment_ack_timeout: Duration,
+    /// Peer max-APDU sizes in bytes, populated from I-Am responses via `who_is`.
+    capability_cache: std::sync::Arc<RwLock<HashMap<DataLinkAddress, usize>>>,
 }
 
+/// Handle for a background task that periodically re-registers this client as a BACnet
+/// foreign device with the BBMD.
+///
+/// Dropping this value aborts the renewal task automatically. Call [`ForeignDeviceRenewal::stop`]
+/// to abort it explicitly.
 #[derive(Debug)]
 pub struct ForeignDeviceRenewal {
     task: JoinHandle<()>,
 }
 
 impl ForeignDeviceRenewal {
+    /// Abort the background renewal task immediately.
     pub fn stop(self) {
         self.task.abort();
     }
@@ -122,6 +146,9 @@ impl Drop for ForeignDeviceRenewal {
 }
 
 impl BacnetClient<BacnetIpTransport> {
+    /// Create a UDP/IP BACnet client bound to an ephemeral port on all interfaces.
+    ///
+    /// Returns [`ClientError::DataLink`] if the socket cannot be bound.
     pub async fn new() -> Result<Self, ClientError> {
         let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
         let datalink = BacnetIpTransport::bind(bind_addr).await?;
@@ -130,12 +157,19 @@ impl BacnetClient<BacnetIpTransport> {
             invoke_id: Mutex::new(1),
             request_io_lock: Mutex::new(()),
             response_timeout: Duration::from_secs(3),
-            segmented_request_window_size: 1,
+            segmented_request_window_size: 16,
             segmented_request_retries: 2,
             segment_ack_timeout: Duration::from_millis(500),
+            capability_cache: std::sync::Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
+    /// Create a UDP/IP BACnet client registered as a foreign device with the BBMD at
+    /// `bbmd_addr`.
+    ///
+    /// `ttl_seconds` is the time-to-live for the foreign-device registration. Returns
+    /// [`ClientError::DataLink`] if the socket cannot be bound or the initial registration
+    /// request fails.
     pub async fn new_foreign(bbmd_addr: SocketAddr, ttl_seconds: u16) -> Result<Self, ClientError> {
         let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
         let datalink = BacnetIpTransport::bind_foreign(bind_addr, bbmd_addr).await?;
@@ -145,55 +179,72 @@ impl BacnetClient<BacnetIpTransport> {
             invoke_id: Mutex::new(1),
             request_io_lock: Mutex::new(()),
             response_timeout: Duration::from_secs(3),
-            segmented_request_window_size: 1,
+            segmented_request_window_size: 16,
             segmented_request_retries: 2,
             segment_ack_timeout: Duration::from_millis(500),
+            capability_cache: std::sync::Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
+    /// Re-register this client as a foreign device with the BBMD, using `ttl_seconds` as the new
+    /// time-to-live.
     pub async fn register_foreign_device(&self, ttl_seconds: u16) -> Result<(), ClientError> {
+        let _io = self.request_io_lock.lock().await;
         self.datalink.register_foreign_device(ttl_seconds).await?;
         Ok(())
     }
 
+    /// Read the Broadcast Distribution Table (BDT) from the BBMD.
     pub async fn read_broadcast_distribution_table(
         &self,
     ) -> Result<Vec<BroadcastDistributionEntry>, ClientError> {
+        let _io = self.request_io_lock.lock().await;
         self.datalink
             .read_broadcast_distribution_table()
             .await
             .map_err(ClientError::from)
     }
 
+    /// Write (replace) the Broadcast Distribution Table on the BBMD with the given `entries`.
     pub async fn write_broadcast_distribution_table(
         &self,
         entries: &[BroadcastDistributionEntry],
     ) -> Result<(), ClientError> {
+        let _io = self.request_io_lock.lock().await;
         self.datalink
             .write_broadcast_distribution_table(entries)
             .await?;
         Ok(())
     }
 
+    /// Read the Foreign Device Table (FDT) from the BBMD.
     pub async fn read_foreign_device_table(
         &self,
     ) -> Result<Vec<ForeignDeviceTableEntry>, ClientError> {
+        let _io = self.request_io_lock.lock().await;
         self.datalink
             .read_foreign_device_table()
             .await
             .map_err(ClientError::from)
     }
 
+    /// Delete the foreign device entry for `address` from the BBMD's Foreign Device Table.
     pub async fn delete_foreign_device_table_entry(
         &self,
         address: SocketAddrV4,
     ) -> Result<(), ClientError> {
+        let _io = self.request_io_lock.lock().await;
         self.datalink
             .delete_foreign_device_table_entry(address)
             .await?;
         Ok(())
     }
 
+    /// Spawn a background task that re-registers this client as a foreign device at roughly
+    /// 75 % of `ttl_seconds` to keep the registration alive indefinitely.
+    ///
+    /// Returns a [`ForeignDeviceRenewal`] handle; dropping it (or calling `.stop()`) cancels
+    /// the task. Returns an error if `ttl_seconds` is 0.
     pub fn start_foreign_device_renewal(
         &self,
         ttl_seconds: u16,
@@ -218,6 +269,8 @@ impl BacnetClient<BacnetIpTransport> {
 }
 
 impl BacnetClient<BacnetScTransport> {
+    /// Create a BACnet/SC client by connecting to the WebSocket hub at `endpoint`
+    /// (e.g. `"wss://hub.example.com:47808/bacnet"`).
     pub async fn new_sc(endpoint: impl Into<String>) -> Result<Self, ClientError> {
         let datalink = BacnetScTransport::connect(endpoint).await?;
         Ok(Self::with_datalink(datalink))
@@ -225,33 +278,44 @@ impl BacnetClient<BacnetScTransport> {
 }
 
 impl<D: DataLink> BacnetClient<D> {
+    /// Create a client wrapping an already-constructed `datalink`.
+    ///
+    /// Use this when you need a custom or pre-configured [`DataLink`] implementation.
     pub fn with_datalink(datalink: D) -> Self {
         Self {
             datalink,
             invoke_id: Mutex::new(1),
             request_io_lock: Mutex::new(()),
             response_timeout: Duration::from_secs(3),
-            segmented_request_window_size: 1,
+            segmented_request_window_size: 16,
             segmented_request_retries: 2,
             segment_ack_timeout: Duration::from_millis(500),
+            capability_cache: std::sync::Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
+    /// Override the per-request response timeout (default: 3 s).
     pub fn with_response_timeout(mut self, timeout: Duration) -> Self {
         self.response_timeout = timeout;
         self
     }
 
+    /// Override the segmented-request window size (number of segments sent before waiting
+    /// for an ACK). Clamped to a minimum of 1. Default: 16.
     pub fn with_segmented_request_window_size(mut self, window_size: u8) -> Self {
         self.segmented_request_window_size = window_size.max(1);
         self
     }
 
+    /// Override the number of times a segment window is retried after a negative ACK or
+    /// segment-ACK timeout before giving up. Default: 2.
     pub fn with_segmented_request_retries(mut self, retries: u8) -> Self {
         self.segmented_request_retries = retries;
         self
     }
 
+    /// Override the timeout used when waiting for a segment ACK from the remote device
+    /// during a segmented confirmed request. Clamped to a minimum of 1 ms. Default: 500 ms.
     pub fn with_segment_ack_timeout(mut self, timeout: Duration) -> Self {
         self.segment_ack_timeout = timeout.max(Duration::from_millis(1));
         self
@@ -450,9 +514,15 @@ impl<D: DataLink> BacnetClient<D> {
         let header = ConfirmedRequestHeader::decode(&mut ar)?;
         let service_payload = ar.read_exact(ar.remaining())?;
 
-        let segment_data_len = Self::max_apdu_octets(header.max_apdu)
-            .saturating_sub(5)
-            .max(MIN_SEGMENT_DATA_LEN);
+        // Use the peer's max-APDU if we learned it from a prior I-Am; fall back to
+        // the code declared in the request header (our own capability advertisement).
+        let peer_max_apdu = self
+            .capability_cache
+            .read()
+            .ok()
+            .and_then(|c| c.get(&address).copied())
+            .unwrap_or_else(|| Self::max_apdu_octets(header.max_apdu));
+        let segment_data_len = peer_max_apdu.saturating_sub(5).max(MIN_SEGMENT_DATA_LEN);
         let segment_count = service_payload.len().div_ceil(segment_data_len);
 
         if segment_count <= 1 {
@@ -664,12 +734,18 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(payload)
     }
 
+    /// Broadcast a Who-Is request and collect I-Am replies for the duration of `wait`.
+    ///
+    /// `range` constrains the device-instance range as `(low, high)`; `None` performs a
+    /// global Who-Is. Duplicate devices (same object id) are deduplicated. Returns
+    /// [`ClientError::DataLink`] on send/receive failure.
     pub async fn who_is(
         &self,
         range: Option<(u32, u32)>,
         wait: Duration,
     ) -> Result<Vec<DiscoveredDevice>, ClientError> {
-        let _io_lock = self.request_io_lock.lock().await;
+        // Unconfirmed broadcast — no request_io_lock needed; the recv loop
+        // filters on service_choice so it coexists with concurrent confirmed requests.
         let req = match range {
             Some((low, high)) => WhoIsRequest {
                 low_limit: Some(low),
@@ -713,11 +789,16 @@ impl<D: DataLink> BacnetClient<D> {
                     let Ok(i_am) = IAmRequest::decode_after_header(&mut r) else {
                         continue;
                     };
-                    if seen.insert(src) {
+                    if seen.insert(i_am.device_id) {
                         devices.push(DiscoveredDevice {
                             address: src,
                             device_id: Some(i_am.device_id),
                         });
+                        // Cache the peer's reported max-APDU so segmented
+                        // requests can be sized correctly without a separate read.
+                        if let Ok(mut cache) = self.capability_cache.write() {
+                            cache.insert(src, i_am.max_apdu as usize);
+                        }
                     }
                 }
                 Ok(Err(DataLinkError::InvalidFrame)) => continue,
@@ -729,6 +810,10 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(devices)
     }
 
+    /// Broadcast a Who-Has request for a specific object id and collect I-Have replies for
+    /// `wait`.
+    ///
+    /// `range` constrains the responding device-instance range; `None` means any device.
     pub async fn who_has_object_id(
         &self,
         range: Option<(u32, u32)>,
@@ -743,6 +828,9 @@ impl<D: DataLink> BacnetClient<D> {
         self.who_has(req, wait).await
     }
 
+    /// Broadcast a Who-Has request for an object by name and collect I-Have replies for `wait`.
+    ///
+    /// `range` constrains the responding device-instance range; `None` means any device.
     pub async fn who_has_object_name(
         &self,
         range: Option<(u32, u32)>,
@@ -762,7 +850,7 @@ impl<D: DataLink> BacnetClient<D> {
         request: WhoHasRequest<'_>,
         wait: Duration,
     ) -> Result<Vec<DiscoveredObject>, ClientError> {
-        let _io_lock = self.request_io_lock.lock().await;
+        // Unconfirmed broadcast — same rationale as who_is.
         let tx = self.encode_with_growth(|w| {
             Npdu::new(0).encode(w)?;
             request.encode(w)
@@ -816,6 +904,11 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(objects)
     }
 
+    /// Send a DeviceCommunicationControl request to a device.
+    ///
+    /// `time_duration_seconds` sets the duration for which the state applies; `None` means
+    /// indefinite. `enable_disable` selects the new communication state. `password` is only
+    /// required if the device is password-protected.
     pub async fn device_communication_control(
         &self,
         address: DataLinkAddress,
@@ -844,6 +937,9 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Send a ReinitializeDevice request to a device (e.g. cold-start, warm-start, or backup).
+    ///
+    /// `state` selects the reinitialization type. `password` is sent only if `Some`.
     pub async fn reinitialize_device(
         &self,
         address: DataLinkAddress,
@@ -870,6 +966,10 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Send a TimeSynchronization (or UTCTimeSynchronization) request to a device.
+    ///
+    /// Set `utc` to `true` to send the UTC variant of the request.
+    /// This is a fire-and-forget unconfirmed service; no response is awaited.
     pub async fn time_synchronize(
         &self,
         address: DataLinkAddress,
@@ -890,6 +990,8 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(())
     }
 
+    /// Create a new object of the given type on the device, letting the device choose the
+    /// instance number. Returns the [`ObjectId`] assigned by the device.
     pub async fn create_object_by_type(
         &self,
         address: DataLinkAddress,
@@ -899,6 +1001,9 @@ impl<D: DataLink> BacnetClient<D> {
             .await
     }
 
+    /// Send a CreateObject request to the device and return the [`ObjectId`] of the newly
+    /// created object. Use this variant when you need fine-grained control over the request
+    /// (e.g. specifying initial property values).
     pub async fn create_object(
         &self,
         address: DataLinkAddress,
@@ -924,6 +1029,7 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(parsed.object_id)
     }
 
+    /// Send a DeleteObject request to remove `object_id` from the device.
     pub async fn delete_object(
         &self,
         address: DataLinkAddress,
@@ -948,6 +1054,7 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Send an AddListElement request to append elements to a list property on the device.
     pub async fn add_list_element(
         &self,
         address: DataLinkAddress,
@@ -969,6 +1076,7 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Send a RemoveListElement request to delete elements from a list property on the device.
     pub async fn remove_list_element(
         &self,
         address: DataLinkAddress,
@@ -998,6 +1106,8 @@ impl<D: DataLink> BacnetClient<D> {
         service_choice: u8,
         timeout_window: Duration,
     ) -> Result<(), ClientError> {
+        #[cfg(feature = "tracing")]
+        tracing::debug!(invoke_id = invoke_id, service = service_choice, target = %address, "sending confirmed request");
         let _io_lock = self.request_io_lock.lock().await;
         let deadline = tokio::time::Instant::now() + timeout_window;
         self.send_confirmed_request(address, tx, deadline).await?;
@@ -1044,6 +1154,8 @@ impl<D: DataLink> BacnetClient<D> {
                 _ => continue,
             }
         }
+        #[cfg(feature = "tracing")]
+        tracing::warn!(invoke_id = invoke_id, "request timed out");
         Err(ClientError::Timeout)
     }
 
@@ -1055,6 +1167,8 @@ impl<D: DataLink> BacnetClient<D> {
         service_choice: u8,
         timeout_window: Duration,
     ) -> Result<Vec<u8>, ClientError> {
+        #[cfg(feature = "tracing")]
+        tracing::debug!(invoke_id = invoke_id, service = service_choice, target = %address, "sending confirmed request");
         let _io_lock = self.request_io_lock.lock().await;
         let deadline = tokio::time::Instant::now() + timeout_window;
         self.send_confirmed_request(address, tx, deadline).await?;
@@ -1112,9 +1226,12 @@ impl<D: DataLink> BacnetClient<D> {
                 _ => continue,
             }
         }
+        #[cfg(feature = "tracing")]
+        tracing::warn!(invoke_id = invoke_id, "request timed out");
         Err(ClientError::Timeout)
     }
 
+    /// Send a GetAlarmSummary request and return the list of active alarms on the device.
     pub async fn get_alarm_summary(
         &self,
         address: DataLinkAddress,
@@ -1139,6 +1256,7 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(into_client_alarm_summary(parsed.summaries))
     }
 
+    /// Send a GetEnrollmentSummary request and return the list of event enrollments on the device.
     pub async fn get_enrollment_summary(
         &self,
         address: DataLinkAddress,
@@ -1163,6 +1281,10 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(into_client_enrollment_summary(parsed.summaries))
     }
 
+    /// Send a GetEventInformation request and return active event summaries from the device.
+    ///
+    /// Pass `last_received_object_id` to page through results; the returned
+    /// [`EventInformationResult::more_events`] indicates whether another call is needed.
     pub async fn get_event_information(
         &self,
         address: DataLinkAddress,
@@ -1194,6 +1316,7 @@ impl<D: DataLink> BacnetClient<D> {
         })
     }
 
+    /// Send an AcknowledgeAlarm request to the device.
     pub async fn acknowledge_alarm(
         &self,
         address: DataLinkAddress,
@@ -1215,6 +1338,10 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Read a contiguous byte range from a BACnet File object using stream access.
+    ///
+    /// `file_start_position` is the byte offset (may be negative for end-relative access).
+    /// `requested_octet_count` is the number of bytes to read.
     pub async fn atomic_read_file_stream(
         &self,
         address: DataLinkAddress,
@@ -1232,6 +1359,10 @@ impl<D: DataLink> BacnetClient<D> {
         self.atomic_read_file(address, request).await
     }
 
+    /// Read a range of records from a BACnet File object using record access.
+    ///
+    /// `file_start_record` is the first record index (may be negative for end-relative access).
+    /// `requested_record_count` is the number of records to read.
     pub async fn atomic_read_file_record(
         &self,
         address: DataLinkAddress,
@@ -1273,6 +1404,8 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(into_client_atomic_read_result(parsed))
     }
 
+    /// Write `file_data` to a BACnet File object starting at `file_start_position` using stream
+    /// access. The returned result contains the actual start position used by the device.
     pub async fn atomic_write_file_stream(
         &self,
         address: DataLinkAddress,
@@ -1290,6 +1423,9 @@ impl<D: DataLink> BacnetClient<D> {
         self.atomic_write_file(address, request).await
     }
 
+    /// Write records to a BACnet File object starting at `file_start_record` using record access.
+    ///
+    /// Each element of `file_record_data` is one record's raw bytes.
     pub async fn atomic_write_file_record(
         &self,
         address: DataLinkAddress,
@@ -1331,6 +1467,9 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(into_client_atomic_write_result(parsed))
     }
 
+    /// Send a SubscribeCOV request to start (or renew) a COV subscription on the device.
+    ///
+    /// Use [`cancel_cov_subscription`](Self::cancel_cov_subscription) to unsubscribe.
     pub async fn subscribe_cov(
         &self,
         address: DataLinkAddress,
@@ -1352,6 +1491,8 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Cancel an existing COV subscription identified by `subscriber_process_id` and
+    /// `monitored_object_id`.
     pub async fn cancel_cov_subscription(
         &self,
         address: DataLinkAddress,
@@ -1365,6 +1506,10 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Send a SubscribeCOVProperty request to subscribe to changes of a specific property.
+    ///
+    /// Use [`cancel_cov_property_subscription`](Self::cancel_cov_property_subscription) to
+    /// unsubscribe.
     pub async fn subscribe_cov_property(
         &self,
         address: DataLinkAddress,
@@ -1386,6 +1531,11 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Cancel an existing COV property subscription.
+    ///
+    /// The combination of `subscriber_process_id`, `monitored_object_id`,
+    /// `monitored_property_id`, and `monitored_property_array_index` must match the
+    /// subscription to cancel.
     pub async fn cancel_cov_property_subscription(
         &self,
         address: DataLinkAddress,
@@ -1407,6 +1557,10 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Read a range of entries from a list/log property by absolute position.
+    ///
+    /// `reference_index` is the 1-based starting entry index. A positive `count` reads
+    /// forward; negative reads backward from `reference_index`.
     pub async fn read_range_by_position(
         &self,
         address: DataLinkAddress,
@@ -1428,6 +1582,10 @@ impl<D: DataLink> BacnetClient<D> {
         self.read_range_with_request(address, req).await
     }
 
+    /// Read a range of entries from a list/log property anchored at a sequence number.
+    ///
+    /// `reference_sequence` is the sequence number of the anchor entry. A positive `count`
+    /// reads forward; negative reads backward.
     pub async fn read_range_by_sequence_number(
         &self,
         address: DataLinkAddress,
@@ -1449,6 +1607,10 @@ impl<D: DataLink> BacnetClient<D> {
         self.read_range_with_request(address, req).await
     }
 
+    /// Read a range of entries from a list/log property anchored at a timestamp.
+    ///
+    /// `at` is the reference date and time. A positive `count` reads forward from that
+    /// timestamp; negative reads backward.
     pub async fn read_range_by_time(
         &self,
         address: DataLinkAddress,
@@ -1496,6 +1658,11 @@ impl<D: DataLink> BacnetClient<D> {
         into_client_read_range(parsed)
     }
 
+    /// Wait up to `wait` for a single incoming COV notification (confirmed or unconfirmed).
+    ///
+    /// Returns `Ok(Some(_))` when a notification arrives, `Ok(None)` on timeout, and
+    /// `Err` on transport failure. Confirmed notifications are automatically acknowledged.
+    /// Segmented confirmed notifications return [`ClientError::UnsupportedResponse`].
     pub async fn recv_cov_notification(
         &self,
         wait: Duration,
@@ -1551,6 +1718,11 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(None)
     }
 
+    /// Wait up to `wait` for a single incoming event notification (confirmed or unconfirmed).
+    ///
+    /// Returns `Ok(Some(_))` when a notification arrives, `Ok(None)` on timeout, and
+    /// `Err` on transport failure. Confirmed notifications are automatically acknowledged.
+    /// Segmented confirmed notifications return [`ClientError::UnsupportedResponse`].
     pub async fn recv_event_notification(
         &self,
         wait: Duration,
@@ -1613,6 +1785,10 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(None)
     }
 
+    /// Send a ReadProperty request and return the property value as a [`ClientDataValue`].
+    ///
+    /// Use [`read_property_multiple`](Self::read_property_multiple) to fetch several
+    /// properties in a single round-trip.
     pub async fn read_property(
         &self,
         address: DataLinkAddress,
@@ -1644,6 +1820,7 @@ impl<D: DataLink> BacnetClient<D> {
         into_client_value(parsed.value)
     }
 
+    /// Send a WriteProperty request to set a single property on the device.
     pub async fn write_property(
         &self,
         address: DataLinkAddress,
@@ -1665,6 +1842,10 @@ impl<D: DataLink> BacnetClient<D> {
         .await
     }
 
+    /// Send a ReadPropertyMultiple request to fetch several properties of one object in a
+    /// single round-trip.
+    ///
+    /// Returns pairs of `(PropertyId, ClientDataValue)` in the order returned by the device.
     pub async fn read_property_multiple(
         &self,
         address: DataLinkAddress,
@@ -1717,6 +1898,8 @@ impl<D: DataLink> BacnetClient<D> {
         Ok(out)
     }
 
+    /// Send a WritePropertyMultiple request to set several properties of one object in a
+    /// single round-trip.
     pub async fn write_property_multiple(
         &self,
         address: DataLinkAddress,
@@ -1778,6 +1961,132 @@ impl<D: DataLink> BacnetClient<D> {
             .await?;
         let mut r = Reader::new(&payload);
         PrivateTransferAck::decode(&mut r).map_err(ClientError::from)
+    }
+
+    /// Read multiple `(object_id, property_id)` pairs in a single ReadPropertyMultiple round-trip.
+    ///
+    /// All pairs must target the same device at `address`. Returns a map from each requested
+    /// `(ObjectId, PropertyId)` to its value. Properties not returned by the device are absent
+    /// from the map (the device may skip unknown properties rather than erroring).
+    pub async fn read_many(
+        &self,
+        address: DataLinkAddress,
+        requests: &[(ObjectId, PropertyId)],
+    ) -> Result<HashMap<(ObjectId, PropertyId), ClientDataValue>, ClientError> {
+        // Group by object to build ReadAccessSpecifications
+        let mut grouped: Vec<(ObjectId, Vec<PropertyReference>)> = Vec::new();
+        for &(oid, pid) in requests {
+            if let Some(entry) = grouped.iter_mut().find(|(o, _)| *o == oid) {
+                entry.1.push(PropertyReference { property_id: pid, array_index: None });
+            } else {
+                grouped.push((oid, vec![PropertyReference { property_id: pid, array_index: None }]));
+            }
+        }
+
+        let specs: Vec<ReadAccessSpecification<'_>> = grouped
+            .iter()
+            .map(|(oid, props)| ReadAccessSpecification { object_id: *oid, properties: props })
+            .collect();
+
+        let invoke_id = self.next_invoke_id().await;
+        let req = ReadPropertyMultipleRequest { specs: &specs, invoke_id };
+        let tx = self.encode_with_growth(|w| {
+            Npdu::new(0).encode(w)?;
+            req.encode(w)
+        })?;
+        let payload = self
+            .await_complex_ack_payload_or_error(
+                address, &tx, invoke_id, SERVICE_READ_PROPERTY_MULTIPLE, self.response_timeout,
+            )
+            .await?;
+
+        let mut pr = Reader::new(&payload);
+        let parsed = ReadPropertyMultipleAck::decode_after_header(&mut pr)?;
+        let mut out = HashMap::new();
+        for access in parsed.results {
+            for item in access.results {
+                if let Ok(v) = into_client_value(item.value) {
+                    out.insert((access.object_id, item.property_id), v);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Write multiple properties across one or more objects in a single WritePropertyMultiple
+    /// round-trip.
+    ///
+    /// `writes` is a slice of `(object_id, property_id, value, priority)` tuples.
+    /// `priority` may be `None` for the relinquish-default case. All writes target the same
+    /// device at `address`. Takes [`ClientDataValue`] (the owned form) for ergonomic use.
+    pub async fn write_many(
+        &self,
+        address: DataLinkAddress,
+        writes: &[(ObjectId, PropertyId, ClientDataValue, Option<u8>)],
+    ) -> Result<(), ClientError> {
+        use rustbac_core::types::{BitString, DataValue as DV};
+
+        fn cv_to_dv(v: &ClientDataValue) -> DV<'_> {
+            match v {
+                ClientDataValue::Null => DV::Null,
+                ClientDataValue::Boolean(b) => DV::Boolean(*b),
+                ClientDataValue::Unsigned(n) => DV::Unsigned(*n),
+                ClientDataValue::Signed(n) => DV::Signed(*n),
+                ClientDataValue::Real(f) => DV::Real(*f),
+                ClientDataValue::Double(f) => DV::Double(*f),
+                ClientDataValue::OctetString(b) => DV::OctetString(b),
+                ClientDataValue::CharacterString(s) => DV::CharacterString(s),
+                ClientDataValue::BitString { unused_bits, data } => {
+                    DV::BitString(BitString { unused_bits: *unused_bits, data })
+                }
+                ClientDataValue::Enumerated(n) => DV::Enumerated(*n),
+                ClientDataValue::Date(d) => DV::Date(*d),
+                ClientDataValue::Time(t) => DV::Time(*t),
+                ClientDataValue::ObjectId(o) => DV::ObjectId(*o),
+                ClientDataValue::Constructed { tag_num, values } => DV::Constructed {
+                    tag_num: *tag_num,
+                    values: values.iter().map(cv_to_dv).collect(),
+                },
+            }
+        }
+
+        // Pre-convert values so DataValue borrows from the input slice lifetime.
+        let converted: Vec<(ObjectId, PropertyId, DV<'_>, Option<u8>)> = writes
+            .iter()
+            .map(|(oid, pid, val, prio)| (*oid, *pid, cv_to_dv(val), *prio))
+            .collect();
+
+        // Group by object to build WriteAccessSpecifications.
+        let mut grouped: Vec<(ObjectId, Vec<PropertyWriteSpec<'_>>)> = Vec::new();
+        for (oid, pid, val, prio) in &converted {
+            let spec = PropertyWriteSpec {
+                property_id: *pid,
+                array_index: None,
+                value: val.clone(),
+                priority: *prio,
+            };
+            if let Some(entry) = grouped.iter_mut().find(|(o, _)| o == oid) {
+                entry.1.push(spec);
+            } else {
+                grouped.push((*oid, vec![spec]));
+            }
+        }
+
+        let specs: Vec<WriteAccessSpecification<'_>> = grouped
+            .iter()
+            .map(|(oid, props)| WriteAccessSpecification { object_id: *oid, properties: props })
+            .collect();
+
+        let invoke_id = self.next_invoke_id().await;
+        let req = WritePropertyMultipleRequest { specs: &specs, invoke_id };
+        let tx = self.encode_with_growth(|w| {
+            Npdu::new(0).encode(w)?;
+            req.encode(w)
+        })?;
+        self.await_simple_ack_or_error(
+            address, &tx, invoke_id, SERVICE_WRITE_PROPERTY_MULTIPLE, self.response_timeout,
+        )
+        .await
     }
 }
 

@@ -92,8 +92,7 @@ if [[ -n "$BBMD" ]]; then
   TARGET_LABEL="$TARGET_LABEL via $BBMD"
 fi
 
-if [[ ! -f "$OUT_FILE" ]]; then
-  cat > "$OUT_FILE" <<EOF
+cat > "$OUT_FILE" <<EOF
 # Live Interop Results
 
 Execution date: $(date +%F)
@@ -101,7 +100,6 @@ Execution date: $(date +%F)
 | Target | Scenario | Result | Notes |
 |---|---|---|---|
 EOF
-fi
 
 pushd "$ROOT_DIR" >/dev/null
 

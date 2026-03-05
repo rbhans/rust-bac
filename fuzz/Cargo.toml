@@ -1,0 +1,37 @@
+[package]
+name = "rustbac-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rustbac-core = { path = "../crates/rustbac-core" }
+rustbac-datalink = { path = "../crates/rustbac-datalink" }
+
+[[bin]]
+name = "fuzz_npdu_decode"
+path = "fuzz_targets/fuzz_npdu_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_apdu_confirmed_decode"
+path = "fuzz_targets/fuzz_apdu_confirmed_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_bvlc_decode"
+path = "fuzz_targets/fuzz_bvlc_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_service_decode"
+path = "fuzz_targets/fuzz_service_decode.rs"
+test = false
+doc = false

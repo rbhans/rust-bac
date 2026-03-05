@@ -1,10 +1,12 @@
 //! Long-running async notification listener.
 //!
 //! Provides a notification listener that receives COV and event notifications
-//! and dispatches them through an unbounded channel.
+//! and dispatches them through a bounded channel.
 
 use crate::{ClientDataValue, CovNotification, CovPropertyValue, EventNotification};
-use rustbac_core::apdu::{ApduType, ConfirmedRequestHeader, SimpleAck, UnconfirmedRequestHeader};
+use rustbac_core::apdu::{
+    abort_reason, AbortPdu, ApduType, ConfirmedRequestHeader, SimpleAck, UnconfirmedRequestHeader,
+};
 use rustbac_core::encoding::{reader::Reader, writer::Writer};
 use rustbac_core::npdu::Npdu;
 use rustbac_core::services::acknowledge_alarm::EventState;
@@ -20,44 +22,60 @@ use rustbac_datalink::{DataLink, DataLinkAddress};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// A notification received from a BACnet device.
+/// Default capacity of the bounded channel used by [`create_notification_listener`].
+///
+/// When this many notifications are queued without being consumed the driver loop drops
+/// new arrivals rather than growing the queue without bound.
+pub const DEFAULT_NOTIFICATION_CHANNEL_CAPACITY: usize = 256;
+
+/// A notification received from a BACnet device — either a COV or an event notification.
 #[derive(Debug, Clone)]
 pub enum Notification {
+    /// A change-of-value notification (confirmed or unconfirmed SubscribeCOV / SubscribeCOVProperty).
     Cov(CovNotification),
+    /// An event notification (confirmed or unconfirmed EventNotification service).
     Event(EventNotification),
 }
 
-/// A receiver for BACnet notifications dispatched by a listener loop.
+/// Consumer half of a BACnet notification channel.
+///
+/// Produced by [`create_notification_listener`] or
+/// [`create_notification_listener_with_capacity`]. The channel is closed and `recv`
+/// returns `None` once the driver future finishes (i.e. when this receiver is dropped).
 pub struct NotificationListener {
-    rx: mpsc::UnboundedReceiver<Notification>,
+    rx: mpsc::Receiver<Notification>,
 }
 
 impl NotificationListener {
-    /// Receive the next notification, waiting indefinitely.
+    /// Wait for and return the next notification. Returns `None` when the driver has stopped.
     pub async fn recv(&mut self) -> Option<Notification> {
         self.rx.recv().await
     }
 }
 
-/// Create a notification listener and the async driver loop.
+/// Create a notification listener backed by a channel with [`DEFAULT_NOTIFICATION_CHANNEL_CAPACITY`].
 ///
 /// Returns `(listener, driver)` where `driver` is a future that must be
 /// polled (e.g. via `tokio::spawn`) for notifications to be received.
-/// The driver runs until the [`NotificationListener`] is dropped.
-///
-/// # Example
-///
-/// ```ignore
-/// let (mut listener, driver) = create_notification_listener(datalink);
-/// tokio::spawn(driver);
-/// while let Some(notification) = listener.recv().await {
-///     // handle notification
-/// }
-/// ```
+/// The driver runs until the [`NotificationListener`] is dropped. When the channel is
+/// full, incoming notifications are silently discarded to bound memory usage.
+/// Confirmed notifications are automatically acknowledged; segmented confirmed
+/// notifications are rejected with an Abort PDU (segmentation not supported).
 pub fn create_notification_listener<D: DataLink + 'static>(
     datalink: Arc<D>,
 ) -> (NotificationListener, impl std::future::Future<Output = ()>) {
-    let (tx, rx) = mpsc::unbounded_channel();
+    create_notification_listener_with_capacity(datalink, DEFAULT_NOTIFICATION_CHANNEL_CAPACITY)
+}
+
+/// Like [`create_notification_listener`] but with an explicit channel `capacity`.
+///
+/// `capacity` is clamped to a minimum of 1. Prefer
+/// [`create_notification_listener`] unless you need a non-default buffer size.
+pub fn create_notification_listener_with_capacity<D: DataLink + 'static>(
+    datalink: Arc<D>,
+    capacity: usize,
+) -> (NotificationListener, impl std::future::Future<Output = ()>) {
+    let (tx, rx) = mpsc::channel(capacity.max(1));
     let driver = async move {
         let mut buf = [0u8; 1500];
         loop {
@@ -66,12 +84,28 @@ pub fn create_notification_listener<D: DataLink + 'static>(
                 Err(_) => continue,
             };
 
-            if let Some((notification, ack)) = parse_notification(&buf[..n], source) {
-                if let Some(ack_bytes) = ack {
+            match parse_notification(&buf[..n], source) {
+                ParseResult::None => {}
+                ParseResult::Abort(ack_bytes) => {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!("segmented notification aborted — segmentation not supported");
                     let _ = datalink.send(source, &ack_bytes).await;
                 }
-                if tx.send(notification).is_err() {
-                    break; // receiver dropped
+                ParseResult::Notification(notification, ack) => {
+                    if let Some(ack_bytes) = ack {
+                        let _ = datalink.send(source, &ack_bytes).await;
+                    }
+                    // Drop notifications when the consumer is slow rather than
+                    // growing the queue without bound. Break only when the
+                    // receiver has been dropped; a full channel just discards
+                    // this notification.
+                    if tx.try_send(notification).is_err() {
+                        if tx.is_closed() {
+                            break; // receiver dropped
+                        }
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!("notification channel full — dropping notification");
+                    }
                 }
             }
         }
@@ -80,54 +114,109 @@ pub fn create_notification_listener<D: DataLink + 'static>(
     (NotificationListener { rx }, driver)
 }
 
-fn parse_notification(
-    frame: &[u8],
-    source: DataLinkAddress,
-) -> Option<(Notification, Option<Vec<u8>>)> {
-    let apdu = extract_apdu(frame)?;
-    let first = *apdu.first()?;
-    let apdu_type = ApduType::from_u8(first >> 4)?;
+enum ParseResult {
+    None,
+    /// Segmented request we cannot handle — send an Abort, emit no notification.
+    Abort(Vec<u8>),
+    /// Parsed notification and optional ack to send back.
+    Notification(Notification, Option<Vec<u8>>),
+}
+
+fn parse_notification(frame: &[u8], source: DataLinkAddress) -> ParseResult {
+    let apdu = match extract_apdu(frame) {
+        Some(a) => a,
+        None => return ParseResult::None,
+    };
+    let first = match apdu.first() {
+        Some(&b) => b,
+        None => return ParseResult::None,
+    };
+    let apdu_type = match ApduType::from_u8(first >> 4) {
+        Some(t) => t,
+        None => return ParseResult::None,
+    };
 
     match apdu_type {
         ApduType::UnconfirmedRequest => {
             let mut r = Reader::new(apdu);
-            let header = UnconfirmedRequestHeader::decode(&mut r).ok()?;
+            let header = match UnconfirmedRequestHeader::decode(&mut r) {
+                Ok(h) => h,
+                Err(_) => return ParseResult::None,
+            };
             match header.service_choice {
                 SERVICE_UNCONFIRMED_COV_NOTIFICATION => {
-                    let cov = CovNotificationRequest::decode_after_header(&mut r).ok()?;
-                    let notification = build_cov_notification(source, false, cov)?;
-                    Some((Notification::Cov(notification), None))
+                    let cov = match CovNotificationRequest::decode_after_header(&mut r) {
+                        Ok(c) => c,
+                        Err(_) => return ParseResult::None,
+                    };
+                    match build_cov_notification(source, false, cov) {
+                        Some(n) => ParseResult::Notification(Notification::Cov(n), None),
+                        None => ParseResult::None,
+                    }
                 }
                 SERVICE_UNCONFIRMED_EVENT_NOTIFICATION => {
-                    let evt = EventNotificationRequest::decode_after_header(&mut r).ok()?;
-                    let notification = build_event_notification(source, false, evt)?;
-                    Some((Notification::Event(notification), None))
+                    let evt = match EventNotificationRequest::decode_after_header(&mut r) {
+                        Ok(e) => e,
+                        Err(_) => return ParseResult::None,
+                    };
+                    match build_event_notification(source, false, evt) {
+                        Some(n) => ParseResult::Notification(Notification::Event(n), None),
+                        None => ParseResult::None,
+                    }
                 }
-                _ => None,
+                _ => ParseResult::None,
             }
         }
         ApduType::ConfirmedRequest => {
             let mut r = Reader::new(apdu);
-            let header = ConfirmedRequestHeader::decode(&mut r).ok()?;
+            let header = match ConfirmedRequestHeader::decode(&mut r) {
+                Ok(h) => h,
+                Err(_) => return ParseResult::None,
+            };
+
+            // Segmented confirmed notifications are not supported. Send an
+            // Abort so the remote device knows and doesn't keep retrying.
+            if header.segmented {
+                return ParseResult::Abort(build_abort(header.invoke_id));
+            }
+
             match header.service_choice {
                 SERVICE_CONFIRMED_COV_NOTIFICATION => {
-                    let cov = CovNotificationRequest::decode_after_header(&mut r).ok()?;
-                    let notification = build_cov_notification(source, true, cov)?;
-                    let ack =
-                        build_simple_ack(header.invoke_id, SERVICE_CONFIRMED_COV_NOTIFICATION);
-                    Some((Notification::Cov(notification), Some(ack)))
+                    let cov = match CovNotificationRequest::decode_after_header(&mut r) {
+                        Ok(c) => c,
+                        Err(_) => return ParseResult::None,
+                    };
+                    match build_cov_notification(source, true, cov) {
+                        Some(n) => {
+                            let ack = build_simple_ack(
+                                header.invoke_id,
+                                SERVICE_CONFIRMED_COV_NOTIFICATION,
+                            );
+                            ParseResult::Notification(Notification::Cov(n), Some(ack))
+                        }
+                        None => ParseResult::None,
+                    }
                 }
                 SERVICE_CONFIRMED_EVENT_NOTIFICATION => {
-                    let evt = EventNotificationRequest::decode_after_header(&mut r).ok()?;
-                    let notification = build_event_notification(source, true, evt)?;
-                    let ack =
-                        build_simple_ack(header.invoke_id, SERVICE_CONFIRMED_EVENT_NOTIFICATION);
-                    Some((Notification::Event(notification), Some(ack)))
+                    let evt = match EventNotificationRequest::decode_after_header(&mut r) {
+                        Ok(e) => e,
+                        Err(_) => return ParseResult::None,
+                    };
+                    match build_event_notification(source, true, evt) {
+                        Some(n) => {
+                            let ack = build_simple_ack(
+                                header.invoke_id,
+                                SERVICE_CONFIRMED_EVENT_NOTIFICATION,
+                            );
+                            ParseResult::Notification(Notification::Event(n), Some(ack))
+                        }
+                        None => ParseResult::None,
+                    }
                 }
-                _ => None,
+                _ => ParseResult::None,
             }
         }
-        _ => None,
+        _ => ParseResult::None,
     }
 }
 
@@ -148,6 +237,20 @@ fn build_simple_ack(invoke_id: u8, service_choice: u8) -> Vec<u8> {
     SimpleAck {
         invoke_id,
         service_choice,
+    }
+    .encode(&mut w)
+    .unwrap();
+    w.as_written().to_vec()
+}
+
+fn build_abort(invoke_id: u8) -> Vec<u8> {
+    let mut buf = [0u8; 32];
+    let mut w = Writer::new(&mut buf);
+    Npdu::new(0).encode(&mut w).unwrap();
+    AbortPdu {
+        server: false,
+        invoke_id,
+        reason: abort_reason::SEGMENTATION_NOT_SUPPORTED,
     }
     .encode(&mut w)
     .unwrap();

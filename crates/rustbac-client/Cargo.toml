@@ -12,9 +12,9 @@ serde = ["dep:serde", "rustbac-core/serde", "rustbac-datalink/serde"]
 tracing = ["dep:tracing"]
 
 [dependencies]
-rustbac-core = { path = "../rustbac-core", version = "0.2.1" }
-rustbac-datalink = { path = "../rustbac-datalink", version = "0.2.1" }
-rustbac-bacnet-sc = { path = "../rustbac-bacnet-sc", version = "0.2.1" }
+rustbac-core = { path = "../rustbac-core", version = "0.3.0" }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.3.0" }
+rustbac-bacnet-sc = { path = "../rustbac-bacnet-sc", version = "0.3.0" }
 thiserror.workspace = true
 tokio.workspace = true
 log.workspace = true

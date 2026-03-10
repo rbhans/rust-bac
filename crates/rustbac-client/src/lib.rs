@@ -64,7 +64,7 @@ pub use server::{
 pub use simulator::SimulatedDevice;
 pub use throttle::DeviceThrottle;
 pub use value::ClientDataValue;
-pub use walk::{DeviceWalkResult, ObjectSummary};
+pub use walk::{DeviceInfo, DeviceWalkResult, ObjectSummary};
 
 // Internal helpers used by simulator module.
 use rustbac_core::encoding::{primitives::decode_unsigned, reader::Reader, tag::Tag};

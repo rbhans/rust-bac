@@ -18,11 +18,21 @@ pub struct ObjectSummary {
     pub status_flags: Option<ClientDataValue>,
 }
 
+/// Metadata read from the Device object during a walk.
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DeviceInfo {
+    pub vendor_name: Option<String>,
+    pub model_name: Option<String>,
+    pub firmware_revision: Option<String>,
+}
+
 /// Result of a full device walk.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DeviceWalkResult {
     pub device_id: ObjectId,
+    pub device_info: DeviceInfo,
     pub objects: Vec<ObjectSummary>,
 }
 
@@ -69,7 +79,44 @@ pub async fn walk_device<D: DataLink>(
         objects.push(summary);
     }
 
-    Ok(DeviceWalkResult { device_id, objects })
+    // 3. Read device metadata (vendor, model, firmware) from the Device object.
+    let device_info = read_device_info(client, addr, device_id).await;
+
+    Ok(DeviceWalkResult {
+        device_id,
+        device_info,
+        objects,
+    })
+}
+
+async fn read_device_info<D: DataLink>(
+    client: &BacnetClient<D>,
+    addr: DataLinkAddress,
+    device_id: ObjectId,
+) -> DeviceInfo {
+    let info_props = &[
+        PropertyId::VendorName,
+        PropertyId::ModelName,
+        PropertyId::FirmwareRevision,
+    ];
+
+    let prop_values = match client.read_property_multiple(addr, device_id, info_props).await {
+        Ok(v) => v,
+        Err(_) => return DeviceInfo::default(),
+    };
+
+    let mut info = DeviceInfo::default();
+    for (pid, val) in &prop_values {
+        if let ClientDataValue::CharacterString(s) = val {
+            match pid {
+                PropertyId::VendorName => info.vendor_name = Some(s.clone()),
+                PropertyId::ModelName => info.model_name = Some(s.clone()),
+                PropertyId::FirmwareRevision => info.firmware_revision = Some(s.clone()),
+                _ => {}
+            }
+        }
+    }
+    info
 }
 
 fn extract_object_ids(value: &ClientDataValue) -> Vec<ObjectId> {

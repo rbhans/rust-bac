@@ -100,7 +100,10 @@ async fn read_device_info<D: DataLink>(
         PropertyId::FirmwareRevision,
     ];
 
-    let prop_values = match client.read_property_multiple(addr, device_id, info_props).await {
+    let prop_values = match client
+        .read_property_multiple(addr, device_id, info_props)
+        .await
+    {
         Ok(v) => v,
         Err(_) => return DeviceInfo::default(),
     };

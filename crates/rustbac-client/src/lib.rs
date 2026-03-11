@@ -59,8 +59,8 @@ pub use rustbac_core::services::device_management::{DeviceCommunicationState, Re
 pub use rustbac_datalink::bip::transport::{BroadcastDistributionEntry, ForeignDeviceTableEntry};
 pub use schedule::{CalendarEntry, DateRange, TimeValue};
 pub use server::{
-    BacnetServer, BacnetServiceError, CovSubscriptionManager, ObjectStore, ObjectStoreHandler,
-    ServiceHandler, encode_unconfirmed_cov_notification,
+    encode_unconfirmed_cov_notification, BacnetServer, BacnetServiceError, CovSubscriptionManager,
+    ObjectStore, ObjectStoreHandler, ServiceHandler,
 };
 pub use simulator::SimulatedDevice;
 pub use throttle::DeviceThrottle;

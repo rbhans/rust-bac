@@ -100,9 +100,13 @@ pub trait ServiceHandler: Send + Sync + 'static {
     ///
     /// Each element of `specs` is `(object_id, vec_of_(property_id, array_index, value, priority))`.
     /// The default implementation rejects with [`BacnetServiceError::WriteAccessDenied`].
+    #[allow(clippy::type_complexity)]
     fn write_property_multiple(
         &self,
-        _specs: &[(ObjectId, Vec<(PropertyId, Option<u32>, ClientDataValue, Option<u8>)>)],
+        _specs: &[(
+            ObjectId,
+            Vec<(PropertyId, Option<u32>, ClientDataValue, Option<u8>)>,
+        )],
     ) -> Result<(), BacnetServiceError> {
         Err(BacnetServiceError::WriteAccessDenied)
     }
@@ -120,10 +124,7 @@ pub trait ServiceHandler: Send + Sync + 'static {
     /// Called for a DeleteObject confirmed request.
     ///
     /// The default implementation rejects with [`BacnetServiceError::WriteAccessDenied`].
-    fn delete_object(
-        &self,
-        _object_id: ObjectId,
-    ) -> Result<(), BacnetServiceError> {
+    fn delete_object(&self, _object_id: ObjectId) -> Result<(), BacnetServiceError> {
         Err(BacnetServiceError::WriteAccessDenied)
     }
 
@@ -789,10 +790,13 @@ impl<D: DataLink> BacnetServer<D> {
                     None
                 };
                 let client_val = crate::data_value_to_client(val);
-                if let Err(err) =
-                    self.handler
-                        .write_property(object_id, property_id, array_index, client_val, priority)
-                {
+                if let Err(err) = self.handler.write_property(
+                    object_id,
+                    property_id,
+                    array_index,
+                    client_val,
+                    priority,
+                ) {
                     self.send_error(invoke_id, SERVICE_WRITE_PROPERTY_MULTIPLE, err, source)
                         .await;
                     return;
@@ -1224,15 +1228,17 @@ impl CovSubscriptionManager {
         issue_confirmed: bool,
         lifetime_seconds: Option<u32>,
     ) {
-        let mut subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        let mut subs = self
+            .subscriptions
+            .lock()
+            .expect("CovSubscriptionManager lock");
         // Remove existing subscription with same key
         subs.retain(|s| {
             !(s.subscriber_process_id == subscriber_process_id
                 && s.monitored_object_id == monitored_object_id)
         });
-        let expires_at = lifetime_seconds.map(|secs| {
-            tokio::time::Instant::now() + std::time::Duration::from_secs(secs as u64)
-        });
+        let expires_at = lifetime_seconds
+            .map(|secs| tokio::time::Instant::now() + std::time::Duration::from_secs(secs as u64));
         subs.push(CovSubscription {
             subscriber_process_id,
             monitored_object_id,
@@ -1244,7 +1250,10 @@ impl CovSubscriptionManager {
 
     /// Cancel a subscription identified by (process_id, object_id).
     pub fn cancel(&self, subscriber_process_id: u32, monitored_object_id: ObjectId) {
-        let mut subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        let mut subs = self
+            .subscriptions
+            .lock()
+            .expect("CovSubscriptionManager lock");
         subs.retain(|s| {
             !(s.subscriber_process_id == subscriber_process_id
                 && s.monitored_object_id == monitored_object_id)
@@ -1254,31 +1263,42 @@ impl CovSubscriptionManager {
     /// Remove expired subscriptions.
     pub fn purge_expired(&self) {
         let now = tokio::time::Instant::now();
-        let mut subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        let mut subs = self
+            .subscriptions
+            .lock()
+            .expect("CovSubscriptionManager lock");
         subs.retain(|s| s.expires_at.map_or(true, |exp| exp > now));
     }
 
     /// Get all active subscribers for a given object.
     /// Returns (subscriber_address, subscriber_process_id, issue_confirmed).
-    pub fn subscribers_for(
-        &self,
-        object_id: ObjectId,
-    ) -> Vec<(DataLinkAddress, u32, bool)> {
+    pub fn subscribers_for(&self, object_id: ObjectId) -> Vec<(DataLinkAddress, u32, bool)> {
         let now = tokio::time::Instant::now();
-        let subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        let subs = self
+            .subscriptions
+            .lock()
+            .expect("CovSubscriptionManager lock");
         subs.iter()
             .filter(|s| {
-                s.monitored_object_id == object_id
-                    && s.expires_at.map_or(true, |exp| exp > now)
+                s.monitored_object_id == object_id && s.expires_at.map_or(true, |exp| exp > now)
             })
-            .map(|s| (s.subscriber_address, s.subscriber_process_id, s.issue_confirmed))
+            .map(|s| {
+                (
+                    s.subscriber_address,
+                    s.subscriber_process_id,
+                    s.issue_confirmed,
+                )
+            })
             .collect()
     }
 
     /// Return the count of active (non-expired) subscriptions.
     pub fn active_count(&self) -> usize {
         let now = tokio::time::Instant::now();
-        let subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        let subs = self
+            .subscriptions
+            .lock()
+            .expect("CovSubscriptionManager lock");
         subs.iter()
             .filter(|s| s.expires_at.map_or(true, |exp| exp > now))
             .count()
@@ -1305,7 +1325,11 @@ pub fn encode_unconfirmed_cov_notification(
     let mut w = Writer::new(&mut buf);
     Npdu::new(0).encode(&mut w).ok()?;
     // UnconfirmedRequest header: type=1, service=2 (UnconfirmedCOVNotification)
-    UnconfirmedRequestHeader { service_choice: 0x02 }.encode(&mut w).ok()?;
+    UnconfirmedRequestHeader {
+        service_choice: 0x02,
+    }
+    .encode(&mut w)
+    .ok()?;
     // [0] subscriber-process-identifier
     encode_ctx_unsigned(&mut w, 0, subscriber_process_id).ok()?;
     // [1] initiating-device-identifier

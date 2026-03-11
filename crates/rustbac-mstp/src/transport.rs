@@ -356,11 +356,7 @@ impl DataLink for MstpTransport {
     /// Queue a BACnet data frame for transmission.
     ///
     /// The frame will be sent the next time this node holds the token.
-    async fn send(
-        &self,
-        address: DataLinkAddress,
-        payload: &[u8],
-    ) -> Result<(), DataLinkError> {
+    async fn send(&self, address: DataLinkAddress, payload: &[u8]) -> Result<(), DataLinkError> {
         let destination = match address {
             DataLinkAddress::Mstp(mac) => mac,
             _ => BROADCAST,
@@ -385,10 +381,7 @@ impl DataLink for MstpTransport {
     /// - **PollForMaster received**: reply with `ReplyToPollForMaster`.
     /// - **No-token timeout**: attempt to claim the token by polling for a
     ///   successor starting at `mac_address + 1`.
-    async fn recv(
-        &self,
-        buf: &mut [u8],
-    ) -> Result<(usize, DataLinkAddress), DataLinkError> {
+    async fn recv(&self, buf: &mut [u8]) -> Result<(usize, DataLinkAddress), DataLinkError> {
         let my_mac = self.config.mac_address;
         let max_master = self.config.max_master;
         let max_info = self.config.max_info_frames;
@@ -480,11 +473,9 @@ impl DataLink for MstpTransport {
                             // Advance poll_station for next time
                             {
                                 let mut st = self.state.lock().await;
-                                st.poll_station =
-                                    next_station_after(st.poll_station, max_master);
+                                st.poll_station = next_station_after(st.poll_station, max_master);
                                 if st.poll_station == my_mac {
-                                    st.poll_station =
-                                        next_station_after(my_mac, max_master);
+                                    st.poll_station = next_station_after(my_mac, max_master);
                                 }
                             }
                         }
@@ -506,9 +497,7 @@ impl DataLink for MstpTransport {
                     // -------------------------------------------------------
                     // PollForMaster addressed to us — reply immediately
                     // -------------------------------------------------------
-                    if frame.frame_type == FrameType::PollForMaster
-                        && frame.destination == my_mac
-                    {
+                    if frame.frame_type == FrameType::PollForMaster && frame.destination == my_mac {
                         log::trace!(
                             "MSTP({my_mac}): PollForMaster from {}, replying",
                             frame.source
@@ -569,12 +558,8 @@ impl DataLink for MstpTransport {
                         let reply = {
                             let mut port = self.port.lock().await;
                             let mut rx_buf = self.rx_buf.lock().await;
-                            Self::read_frame_timeout(
-                                &mut port,
-                                &mut rx_buf,
-                                T_REPLY_TIMEOUT,
-                            )
-                            .await?
+                            Self::read_frame_timeout(&mut port, &mut rx_buf, T_REPLY_TIMEOUT)
+                                .await?
                         };
 
                         if let Some(ref r) = reply {
@@ -614,8 +599,7 @@ impl DataLink for MstpTransport {
                     {
                         let mut port = self.port.lock().await;
                         let mut queue = self.tx_queue.lock().await;
-                        Self::send_queued_frames(&mut port, &mut queue, my_mac, max_info)
-                            .await?;
+                        Self::send_queued_frames(&mut port, &mut queue, my_mac, max_info).await?;
                     }
 
                     let (next, sole) = {
@@ -707,17 +691,11 @@ mod tests {
             Poll::Ready(Ok(buf.len()))
         }
 
-        fn poll_flush(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<std::io::Result<()>> {
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
             Poll::Ready(Ok(()))
         }
 
-        fn poll_shutdown(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<std::io::Result<()>> {
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
             Poll::Ready(Ok(()))
         }
     }
@@ -948,9 +926,8 @@ mod tests {
 
         // Verify the transport wrote the queued data frame + a token pass
         let port = transport.port.lock().await;
-        let mock_ref: &MockSerial = unsafe {
-            &*(&**port as *const dyn AsyncSerial as *const MockSerial)
-        };
+        let mock_ref: &MockSerial =
+            unsafe { &*(&**port as *const dyn AsyncSerial as *const MockSerial) };
 
         // Parse all written frames
         let mut written_frames = Vec::new();

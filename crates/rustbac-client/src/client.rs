@@ -16,7 +16,6 @@ use rustbac_core::encoding::{
     writer::Writer,
 };
 use rustbac_core::npdu::Npdu;
-use rustbac_core::services::value_codec::encode_application_data_value;
 use rustbac_core::services::acknowledge_alarm::{
     AcknowledgeAlarmRequest, SERVICE_ACKNOWLEDGE_ALARM,
 };
@@ -76,6 +75,7 @@ use rustbac_core::services::subscribe_cov_property::{
     SubscribeCovPropertyRequest, SERVICE_SUBSCRIBE_COV_PROPERTY,
 };
 use rustbac_core::services::time_synchronization::TimeSynchronizationRequest;
+use rustbac_core::services::value_codec::encode_application_data_value;
 use rustbac_core::services::who_has::{IHaveRequest, WhoHasObject, WhoHasRequest, SERVICE_I_HAVE};
 use rustbac_core::services::who_is::WhoIsRequest;
 use rustbac_core::services::write_property::{WritePropertyRequest, SERVICE_WRITE_PROPERTY};
@@ -142,10 +142,16 @@ impl<D: DataLink + std::fmt::Debug> std::fmt::Debug for BacnetClient<D> {
             .field("datalink", &self.datalink)
             .field("invoke_id", &self.invoke_id)
             .field("response_timeout", &self.response_timeout)
-            .field("segmented_request_window_size", &self.segmented_request_window_size)
+            .field(
+                "segmented_request_window_size",
+                &self.segmented_request_window_size,
+            )
             .field("segmented_request_retries", &self.segmented_request_retries)
             .field("segment_ack_timeout", &self.segment_ack_timeout)
-            .field("server_handler", &self.server_handler.as_ref().map(|_| "..."))
+            .field(
+                "server_handler",
+                &self.server_handler.as_ref().map(|_| "..."),
+            )
             .field("server_device_id", &self.server_device_id)
             .field("server_vendor_id", &self.server_vendor_id)
             .finish()
@@ -386,10 +392,7 @@ impl<D: DataLink> BacnetClient<D> {
     /// Returns `Ok(())` regardless of whether a request was received or dispatched.
     /// Returns `Err(ClientError::Timeout)` if no server handler has been configured.
     pub async fn poll_server(&self) -> Result<(), ClientError> {
-        let handler = self
-            .server_handler
-            .as_ref()
-            .ok_or(ClientError::Timeout)?;
+        let handler = self.server_handler.as_ref().ok_or(ClientError::Timeout)?;
         let _io_lock = self.request_io_lock.lock().await;
         let mut buf = [0u8; 1500];
         match tokio::time::timeout(Duration::from_millis(50), self.datalink.recv(&mut buf)).await {
@@ -3132,7 +3135,10 @@ fn dispatch_client_value_to_borrowed(val: &ClientDataValue) -> DataValue<'_> {
         ClientDataValue::ObjectId(v) => DataValue::ObjectId(*v),
         ClientDataValue::Constructed { tag_num, values } => DataValue::Constructed {
             tag_num: *tag_num,
-            values: values.iter().map(dispatch_client_value_to_borrowed).collect(),
+            values: values
+                .iter()
+                .map(dispatch_client_value_to_borrowed)
+                .collect(),
         },
     }
 }

@@ -89,7 +89,7 @@ const HEADER_CRC_GOOD: u8 = {
     // The residual when processing data + !accumulator is always the same.
     // We compute it from a trivial case: empty data, crc = !0xFF = 0x00.
     // crc8_byte(0xFF, 0x00):
-    let mut val: u8 = 0xFF ^ 0x00;
+    let mut val: u8 = 0xFF;
     let mut i = 0;
     while i < 8 {
         if (val & 1) != 0 {
@@ -107,7 +107,7 @@ const HEADER_CRC_GOOD: u8 = {
 const DATA_CRC_GOOD: u16 = {
     // Similar derivation: empty data, crc16 = !0xFFFF = 0x0000 → LE bytes [0x00, 0x00].
     // Process crc16_byte(0xFFFF, 0x00), then crc16_byte(result, 0x00).
-    let crc_low_1: u8 = (0xFFFF_u16 ^ 0x00) as u8; // 0xFF
+    let crc_low_1: u8 = 0xFFFF_u16 as u8; // 0xFF
     let mut val1: u16 = crc_low_1 as u16;
     let mut i = 0;
     while i < 8 {
@@ -120,7 +120,7 @@ const DATA_CRC_GOOD: u16 = {
     }
     let after_first: u16 = (0xFFFF_u16 >> 8) ^ val1;
 
-    let crc_low_2: u8 = ((after_first ^ 0x00) & 0xFF) as u8;
+    let crc_low_2: u8 = (after_first & 0xFF) as u8;
     let mut val2: u16 = crc_low_2 as u16;
     i = 0;
     while i < 8 {

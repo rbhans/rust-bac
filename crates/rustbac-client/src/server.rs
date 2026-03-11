@@ -21,7 +21,16 @@ use rustbac_core::services::read_property::SERVICE_READ_PROPERTY;
 use rustbac_core::services::read_property_multiple::SERVICE_READ_PROPERTY_MULTIPLE;
 use rustbac_core::services::value_codec::encode_application_data_value;
 use rustbac_core::services::write_property::SERVICE_WRITE_PROPERTY;
-use rustbac_core::types::{ObjectId, PropertyId};
+use rustbac_core::types::{ObjectId, ObjectType, PropertyId};
+
+/// WritePropertyMultiple service choice (0x10).
+const SERVICE_WRITE_PROPERTY_MULTIPLE: u8 = 0x10;
+/// SubscribeCOV service choice (0x05).
+const SERVICE_SUBSCRIBE_COV: u8 = 0x05;
+/// CreateObject service choice (0x0A).
+const SERVICE_CREATE_OBJECT: u8 = 0x0A;
+/// DeleteObject service choice (0x0B).
+const SERVICE_DELETE_OBJECT: u8 = 0x0B;
 use rustbac_datalink::{DataLink, DataLinkAddress};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -41,6 +50,8 @@ pub enum BacnetServiceError {
     WriteAccessDenied,
     /// The supplied value is of the wrong type.
     InvalidDataType,
+    /// The service is not supported by this server.
+    ServiceNotSupported,
 }
 
 impl BacnetServiceError {
@@ -55,6 +66,8 @@ impl BacnetServiceError {
             BacnetServiceError::WriteAccessDenied => (2, 40),
             // error-class: property (2), error-code: invalid-data-type (9)
             BacnetServiceError::InvalidDataType => (2, 9),
+            // error-class: services (5), error-code: service-not-supported (53)
+            BacnetServiceError::ServiceNotSupported => (5, 53),
         }
     }
 }
@@ -82,6 +95,50 @@ pub trait ServiceHandler: Send + Sync + 'static {
         value: ClientDataValue,
         priority: Option<u8>,
     ) -> Result<(), BacnetServiceError>;
+
+    /// Called for a WritePropertyMultiple confirmed request.
+    ///
+    /// Each element of `specs` is `(object_id, vec_of_(property_id, array_index, value, priority))`.
+    /// The default implementation rejects with [`BacnetServiceError::WriteAccessDenied`].
+    fn write_property_multiple(
+        &self,
+        _specs: &[(ObjectId, Vec<(PropertyId, Option<u32>, ClientDataValue, Option<u8>)>)],
+    ) -> Result<(), BacnetServiceError> {
+        Err(BacnetServiceError::WriteAccessDenied)
+    }
+
+    /// Called for a CreateObject confirmed request.
+    ///
+    /// The default implementation rejects with [`BacnetServiceError::WriteAccessDenied`].
+    fn create_object(
+        &self,
+        _object_type: rustbac_core::types::ObjectType,
+    ) -> Result<ObjectId, BacnetServiceError> {
+        Err(BacnetServiceError::WriteAccessDenied)
+    }
+
+    /// Called for a DeleteObject confirmed request.
+    ///
+    /// The default implementation rejects with [`BacnetServiceError::WriteAccessDenied`].
+    fn delete_object(
+        &self,
+        _object_id: ObjectId,
+    ) -> Result<(), BacnetServiceError> {
+        Err(BacnetServiceError::WriteAccessDenied)
+    }
+
+    /// Called for a SubscribeCOV confirmed request.
+    ///
+    /// The default implementation rejects with [`BacnetServiceError::UnknownObject`].
+    fn subscribe_cov(
+        &self,
+        _subscriber_process_id: u32,
+        _monitored_object_id: ObjectId,
+        _issue_confirmed: bool,
+        _lifetime: Option<u32>,
+    ) -> Result<(), BacnetServiceError> {
+        Err(BacnetServiceError::UnknownObject)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,6 +346,19 @@ impl<D: DataLink> BacnetServer<D> {
                     SERVICE_READ_PROPERTY_MULTIPLE => {
                         self.handle_read_property_multiple(&mut r, invoke_id, source)
                             .await;
+                    }
+                    SERVICE_WRITE_PROPERTY_MULTIPLE => {
+                        self.handle_write_property_multiple(&mut r, invoke_id, source)
+                            .await;
+                    }
+                    SERVICE_SUBSCRIBE_COV => {
+                        self.handle_subscribe_cov(&mut r, invoke_id, source).await;
+                    }
+                    SERVICE_CREATE_OBJECT => {
+                        self.handle_create_object(&mut r, invoke_id, source).await;
+                    }
+                    SERVICE_DELETE_OBJECT => {
+                        self.handle_delete_object(&mut r, invoke_id, source).await;
                     }
                     _ => {
                         // Unknown service — send Reject with UNRECOGNIZED_SERVICE.
@@ -646,6 +716,272 @@ impl<D: DataLink> BacnetServer<D> {
         let _ = self.datalink.send(source, w.as_written()).await;
     }
 
+    async fn handle_write_property_multiple(
+        &self,
+        r: &mut Reader<'_>,
+        invoke_id: u8,
+        source: DataLinkAddress,
+    ) {
+        // Parse write-access-specifications and call write_property for each property.
+        while !r.is_empty() {
+            let object_id = match crate::decode_ctx_object_id(r) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            // Opening tag [1] — list of properties
+            match Tag::decode(r) {
+                Ok(Tag::Opening { tag_num: 1 }) => {}
+                _ => return,
+            }
+            loop {
+                // Check for closing tag [1]
+                let tag = match Tag::decode(r) {
+                    Ok(t) => t,
+                    Err(_) => return,
+                };
+                if tag == (Tag::Closing { tag_num: 1 }) {
+                    break;
+                }
+                // property-identifier [0]
+                let property_id = match tag {
+                    Tag::Context { tag_num: 0, len } => match decode_unsigned(r, len as usize) {
+                        Ok(v) => PropertyId::from_u32(v),
+                        Err(_) => return,
+                    },
+                    _ => return,
+                };
+                // optional array-index [1]
+                let array_index = if !r.is_empty() {
+                    match peek_context_tag(r, 1) {
+                        Some(len) => {
+                            let _ = Tag::decode(r);
+                            decode_unsigned(r, len as usize).ok()
+                        }
+                        None => None,
+                    }
+                } else {
+                    None
+                };
+                // property-value [2] opening
+                match Tag::decode(r) {
+                    Ok(Tag::Opening { tag_num: 2 }) => {}
+                    _ => return,
+                }
+                let val =
+                    match rustbac_core::services::value_codec::decode_application_data_value(r) {
+                        Ok(v) => v,
+                        Err(_) => return,
+                    };
+                match Tag::decode(r) {
+                    Ok(Tag::Closing { tag_num: 2 }) => {}
+                    _ => return,
+                }
+                // optional priority [3]
+                let priority = if !r.is_empty() {
+                    match peek_context_tag(r, 3) {
+                        Some(len) => {
+                            let _ = Tag::decode(r);
+                            decode_unsigned(r, len as usize).ok().map(|p| p as u8)
+                        }
+                        None => None,
+                    }
+                } else {
+                    None
+                };
+                let client_val = crate::data_value_to_client(val);
+                if let Err(err) =
+                    self.handler
+                        .write_property(object_id, property_id, array_index, client_val, priority)
+                {
+                    self.send_error(invoke_id, SERVICE_WRITE_PROPERTY_MULTIPLE, err, source)
+                        .await;
+                    return;
+                }
+            }
+        }
+        // All properties written successfully — send SimpleAck.
+        let mut buf = [0u8; 32];
+        let mut w = Writer::new(&mut buf);
+        if Npdu::new(0).encode(&mut w).is_err() {
+            return;
+        }
+        if (SimpleAck {
+            invoke_id,
+            service_choice: SERVICE_WRITE_PROPERTY_MULTIPLE,
+        })
+        .encode(&mut w)
+        .is_err()
+        {
+            return;
+        }
+        let _ = self.datalink.send(source, w.as_written()).await;
+    }
+
+    async fn handle_subscribe_cov(
+        &self,
+        r: &mut Reader<'_>,
+        invoke_id: u8,
+        source: DataLinkAddress,
+    ) {
+        // subscriberProcessIdentifier [0]
+        let subscriber_process_id = match Tag::decode(r) {
+            Ok(Tag::Context { tag_num: 0, len }) => match decode_unsigned(r, len as usize) {
+                Ok(v) => v,
+                Err(_) => return,
+            },
+            _ => return,
+        };
+        // monitoredObjectIdentifier [1]
+        let monitored_object_id = match crate::decode_ctx_object_id(r) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        // issueConfirmedNotifications [2]
+        let issue_confirmed = match Tag::decode(r) {
+            Ok(Tag::Context { tag_num: 2, len }) => match decode_unsigned(r, len as usize) {
+                Ok(v) => v != 0,
+                Err(_) => return,
+            },
+            _ => return,
+        };
+        // optional lifetime [3]
+        let lifetime = if !r.is_empty() {
+            match peek_context_tag(r, 3) {
+                Some(len) => {
+                    let _ = Tag::decode(r);
+                    decode_unsigned(r, len as usize).ok()
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        match self.handler.subscribe_cov(
+            subscriber_process_id,
+            monitored_object_id,
+            issue_confirmed,
+            lifetime,
+        ) {
+            Ok(()) => {
+                let mut buf = [0u8; 32];
+                let mut w = Writer::new(&mut buf);
+                if Npdu::new(0).encode(&mut w).is_err() {
+                    return;
+                }
+                if (SimpleAck {
+                    invoke_id,
+                    service_choice: SERVICE_SUBSCRIBE_COV,
+                })
+                .encode(&mut w)
+                .is_err()
+                {
+                    return;
+                }
+                let _ = self.datalink.send(source, w.as_written()).await;
+            }
+            Err(err) => {
+                self.send_error(invoke_id, SERVICE_SUBSCRIBE_COV, err, source)
+                    .await;
+            }
+        }
+    }
+
+    async fn handle_create_object(
+        &self,
+        r: &mut Reader<'_>,
+        invoke_id: u8,
+        source: DataLinkAddress,
+    ) {
+        // objectSpecifier [0] opening
+        match Tag::decode(r) {
+            Ok(Tag::Opening { tag_num: 0 }) => {}
+            _ => return,
+        }
+        // objectType [0] — context-tagged enumerated
+        let object_type_raw = match Tag::decode(r) {
+            Ok(Tag::Context { tag_num: 0, len }) => match decode_unsigned(r, len as usize) {
+                Ok(v) => v,
+                Err(_) => return,
+            },
+            _ => return,
+        };
+        let object_type = ObjectType::from_u16(object_type_raw as u16);
+        // objectSpecifier [0] closing
+        match Tag::decode(r) {
+            Ok(Tag::Closing { tag_num: 0 }) => {}
+            _ => return,
+        }
+
+        match self.handler.create_object(object_type) {
+            Ok(created_id) => {
+                let mut buf = [0u8; 64];
+                let mut w = Writer::new(&mut buf);
+                if Npdu::new(0).encode(&mut w).is_err() {
+                    return;
+                }
+                if (ComplexAckHeader {
+                    segmented: false,
+                    more_follows: false,
+                    invoke_id,
+                    sequence_number: None,
+                    proposed_window_size: None,
+                    service_choice: SERVICE_CREATE_OBJECT,
+                })
+                .encode(&mut w)
+                .is_err()
+                {
+                    return;
+                }
+                if encode_ctx_unsigned(&mut w, 0, created_id.raw()).is_err() {
+                    return;
+                }
+                let _ = self.datalink.send(source, w.as_written()).await;
+            }
+            Err(err) => {
+                self.send_error(invoke_id, SERVICE_CREATE_OBJECT, err, source)
+                    .await;
+            }
+        }
+    }
+
+    async fn handle_delete_object(
+        &self,
+        r: &mut Reader<'_>,
+        invoke_id: u8,
+        source: DataLinkAddress,
+    ) {
+        // objectIdentifier — application-tagged
+        let object_id = match crate::decode_ctx_object_id(r) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        match self.handler.delete_object(object_id) {
+            Ok(()) => {
+                let mut buf = [0u8; 32];
+                let mut w = Writer::new(&mut buf);
+                if Npdu::new(0).encode(&mut w).is_err() {
+                    return;
+                }
+                if (SimpleAck {
+                    invoke_id,
+                    service_choice: SERVICE_DELETE_OBJECT,
+                })
+                .encode(&mut w)
+                .is_err()
+                {
+                    return;
+                }
+                let _ = self.datalink.send(source, w.as_written()).await;
+            }
+            Err(err) => {
+                self.send_error(invoke_id, SERVICE_DELETE_OBJECT, err, source)
+                    .await;
+            }
+        }
+    }
+
     async fn send_error(
         &self,
         invoke_id: u8,
@@ -841,6 +1177,7 @@ fn client_value_to_borrowed(val: &ClientDataValue) -> rustbac_core::types::DataV
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Thin extension to allow calling `w.write_u8` inside this module.
+#[allow(dead_code)]
 trait WriterExt {
     fn write_u8(&mut self, b: u8) -> Result<(), rustbac_core::EncodeError>;
 }
@@ -849,6 +1186,147 @@ impl WriterExt for Writer<'_> {
     fn write_u8(&mut self, b: u8) -> Result<(), rustbac_core::EncodeError> {
         Writer::write_u8(self, b)
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COV Subscription Manager
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Tracks active COV subscriptions and generates notifications on property changes.
+pub struct CovSubscriptionManager {
+    subscriptions: Mutex<Vec<CovSubscription>>,
+}
+
+struct CovSubscription {
+    subscriber_process_id: u32,
+    monitored_object_id: ObjectId,
+    subscriber_address: DataLinkAddress,
+    issue_confirmed: bool,
+    /// Absolute deadline (tokio::time::Instant). None = infinite lifetime.
+    expires_at: Option<tokio::time::Instant>,
+}
+
+impl CovSubscriptionManager {
+    /// Create an empty subscription manager.
+    pub fn new() -> Self {
+        Self {
+            subscriptions: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Add or renew a subscription. If a subscription with the same
+    /// (process_id, object_id) already exists, it is renewed.
+    pub fn subscribe(
+        &self,
+        subscriber_process_id: u32,
+        monitored_object_id: ObjectId,
+        subscriber_address: DataLinkAddress,
+        issue_confirmed: bool,
+        lifetime_seconds: Option<u32>,
+    ) {
+        let mut subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        // Remove existing subscription with same key
+        subs.retain(|s| {
+            !(s.subscriber_process_id == subscriber_process_id
+                && s.monitored_object_id == monitored_object_id)
+        });
+        let expires_at = lifetime_seconds.map(|secs| {
+            tokio::time::Instant::now() + std::time::Duration::from_secs(secs as u64)
+        });
+        subs.push(CovSubscription {
+            subscriber_process_id,
+            monitored_object_id,
+            subscriber_address,
+            issue_confirmed,
+            expires_at,
+        });
+    }
+
+    /// Cancel a subscription identified by (process_id, object_id).
+    pub fn cancel(&self, subscriber_process_id: u32, monitored_object_id: ObjectId) {
+        let mut subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        subs.retain(|s| {
+            !(s.subscriber_process_id == subscriber_process_id
+                && s.monitored_object_id == monitored_object_id)
+        });
+    }
+
+    /// Remove expired subscriptions.
+    pub fn purge_expired(&self) {
+        let now = tokio::time::Instant::now();
+        let mut subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        subs.retain(|s| s.expires_at.map_or(true, |exp| exp > now));
+    }
+
+    /// Get all active subscribers for a given object.
+    /// Returns (subscriber_address, subscriber_process_id, issue_confirmed).
+    pub fn subscribers_for(
+        &self,
+        object_id: ObjectId,
+    ) -> Vec<(DataLinkAddress, u32, bool)> {
+        let now = tokio::time::Instant::now();
+        let subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        subs.iter()
+            .filter(|s| {
+                s.monitored_object_id == object_id
+                    && s.expires_at.map_or(true, |exp| exp > now)
+            })
+            .map(|s| (s.subscriber_address, s.subscriber_process_id, s.issue_confirmed))
+            .collect()
+    }
+
+    /// Return the count of active (non-expired) subscriptions.
+    pub fn active_count(&self) -> usize {
+        let now = tokio::time::Instant::now();
+        let subs = self.subscriptions.lock().expect("CovSubscriptionManager lock");
+        subs.iter()
+            .filter(|s| s.expires_at.map_or(true, |exp| exp > now))
+            .count()
+    }
+}
+
+impl Default for CovSubscriptionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Encode an UnconfirmedCOVNotification PDU.
+///
+/// Returns the encoded bytes or `None` if the buffer is too small.
+pub fn encode_unconfirmed_cov_notification(
+    subscriber_process_id: u32,
+    initiating_device_id: ObjectId,
+    monitored_object_id: ObjectId,
+    time_remaining: u32,
+    values: &[(PropertyId, ClientDataValue)],
+) -> Option<Vec<u8>> {
+    let mut buf = [0u8; 1400];
+    let mut w = Writer::new(&mut buf);
+    Npdu::new(0).encode(&mut w).ok()?;
+    // UnconfirmedRequest header: type=1, service=2 (UnconfirmedCOVNotification)
+    UnconfirmedRequestHeader { service_choice: 0x02 }.encode(&mut w).ok()?;
+    // [0] subscriber-process-identifier
+    encode_ctx_unsigned(&mut w, 0, subscriber_process_id).ok()?;
+    // [1] initiating-device-identifier
+    encode_ctx_unsigned(&mut w, 1, initiating_device_id.raw()).ok()?;
+    // [2] monitored-object-identifier
+    encode_ctx_unsigned(&mut w, 2, monitored_object_id.raw()).ok()?;
+    // [3] time-remaining
+    encode_ctx_unsigned(&mut w, 3, time_remaining).ok()?;
+    // [4] list-of-values
+    Tag::Opening { tag_num: 4 }.encode(&mut w).ok()?;
+    for (prop_id, value) in values {
+        // property-identifier [0]
+        encode_ctx_unsigned(&mut w, 0, prop_id.to_u32()).ok()?;
+        // property-value [2] (opening)
+        Tag::Opening { tag_num: 2 }.encode(&mut w).ok()?;
+        let borrowed = client_value_to_borrowed(value);
+        encode_application_data_value(&mut w, &borrowed).ok()?;
+        Tag::Closing { tag_num: 2 }.encode(&mut w).ok()?;
+    }
+    Tag::Closing { tag_num: 4 }.encode(&mut w).ok()?;
+    Some(w.as_written().to_vec())
 }
 
 #[cfg(test)]
@@ -1119,5 +1597,31 @@ mod tests {
         let reason = r.read_u8().unwrap();
         assert_eq!(id, 99);
         assert_eq!(reason, 0x08); // UNRECOGNIZED_SERVICE
+    }
+
+    #[tokio::test]
+    async fn cov_subscription_manager_subscribe_and_cancel() {
+        let mgr = CovSubscriptionManager::new();
+        let obj = ObjectId::new(ObjectType::AnalogValue, 1);
+        let addr = source();
+
+        mgr.subscribe(1, obj, addr, false, Some(300));
+        assert_eq!(mgr.active_count(), 1);
+        assert_eq!(mgr.subscribers_for(obj).len(), 1);
+
+        mgr.cancel(1, obj);
+        assert_eq!(mgr.active_count(), 0);
+        assert_eq!(mgr.subscribers_for(obj).len(), 0);
+    }
+
+    #[test]
+    fn encode_unconfirmed_cov_notification_produces_bytes() {
+        let device_id = ObjectId::new(ObjectType::Device, 42);
+        let object_id = ObjectId::new(ObjectType::AnalogValue, 1);
+        let values = vec![(PropertyId::PresentValue, ClientDataValue::Real(72.5))];
+        let result = encode_unconfirmed_cov_notification(1, device_id, object_id, 300, &values);
+        assert!(result.is_some());
+        let bytes = result.unwrap();
+        assert!(bytes.len() > 10);
     }
 }

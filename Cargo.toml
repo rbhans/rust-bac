@@ -4,6 +4,7 @@ members = [
   "crates/rustbac-datalink",
   "crates/rustbac-bacnet-sc",
   "crates/rustbac-client",
+  "crates/rustbac-mstp",
   "crates/rustbac-tools",
   "fuzz",
 ]

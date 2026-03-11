@@ -1,0 +1,11 @@
+[package]
+name = "rustbac-mstp"
+version = "0.3.0"
+edition = "2021"
+description = "BACnet MS/TP data link layer over RS-485 serial"
+
+[dependencies]
+rustbac-datalink = { path = "../rustbac-datalink" }
+tokio = { version = "1", features = ["rt", "time", "sync", "io-util"] }
+tokio-serial = "5"
+log = "0.4"

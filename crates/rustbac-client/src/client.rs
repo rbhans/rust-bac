@@ -9,8 +9,14 @@ use rustbac_core::apdu::{
     AbortPdu, ApduType, BacnetError, ComplexAckHeader, ConfirmedRequestHeader, RejectPdu,
     SegmentAck, SimpleAck, UnconfirmedRequestHeader,
 };
-use rustbac_core::encoding::{reader::Reader, writer::Writer};
+use rustbac_core::encoding::{
+    primitives::{decode_unsigned, encode_ctx_unsigned},
+    reader::Reader,
+    tag::Tag,
+    writer::Writer,
+};
 use rustbac_core::npdu::Npdu;
+use rustbac_core::services::value_codec::encode_application_data_value;
 use rustbac_core::services::acknowledge_alarm::{
     AcknowledgeAlarmRequest, SERVICE_ACKNOWLEDGE_ALARM,
 };
@@ -77,7 +83,9 @@ use rustbac_core::services::write_property_multiple::{
     PropertyWriteSpec, WriteAccessSpecification, WritePropertyMultipleRequest,
     SERVICE_WRITE_PROPERTY_MULTIPLE,
 };
-use rustbac_core::types::{DataValue, Date, ErrorClass, ErrorCode, ObjectId, PropertyId, Time};
+use rustbac_core::types::{
+    DataValue, Date, ErrorClass, ErrorCode, ObjectId, ObjectType, PropertyId, Time,
+};
 use rustbac_core::EncodeError;
 use rustbac_datalink::bip::transport::{
     BacnetIpTransport, BroadcastDistributionEntry, ForeignDeviceTableEntry,
@@ -109,7 +117,6 @@ const MAX_COMPLEX_ACK_REASSEMBLY_BYTES: usize = 1024 * 1024;
 ///   (register as a foreign device with a BBMD).
 /// - BACnet/SC (WebSocket): [`BacnetClient::new_sc()`].
 /// - Custom transport: [`BacnetClient::with_datalink()`].
-#[derive(Debug)]
 pub struct BacnetClient<D: DataLink> {
     datalink: D,
     invoke_id: Mutex<u8>,
@@ -120,6 +127,29 @@ pub struct BacnetClient<D: DataLink> {
     segment_ack_timeout: Duration,
     /// Peer max-APDU sizes in bytes, populated from I-Am responses via `who_is`.
     capability_cache: std::sync::Arc<RwLock<HashMap<DataLinkAddress, usize>>>,
+    /// Optional server handler for inline request dispatch.
+    server_handler: Option<std::sync::Arc<dyn crate::server::ServiceHandler>>,
+    /// Device instance number used for I-Am responses when serving inline.
+    server_device_id: u32,
+    /// Vendor ID used for I-Am responses when serving inline.
+    #[allow(unused)]
+    server_vendor_id: u16,
+}
+
+impl<D: DataLink + std::fmt::Debug> std::fmt::Debug for BacnetClient<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BacnetClient")
+            .field("datalink", &self.datalink)
+            .field("invoke_id", &self.invoke_id)
+            .field("response_timeout", &self.response_timeout)
+            .field("segmented_request_window_size", &self.segmented_request_window_size)
+            .field("segmented_request_retries", &self.segmented_request_retries)
+            .field("segment_ack_timeout", &self.segment_ack_timeout)
+            .field("server_handler", &self.server_handler.as_ref().map(|_| "..."))
+            .field("server_device_id", &self.server_device_id)
+            .field("server_vendor_id", &self.server_vendor_id)
+            .finish()
+    }
 }
 
 /// Handle for a background task that periodically re-registers this client as a BACnet
@@ -161,6 +191,9 @@ impl BacnetClient<BacnetIpTransport> {
             segmented_request_retries: 2,
             segment_ack_timeout: Duration::from_millis(500),
             capability_cache: std::sync::Arc::new(RwLock::new(HashMap::new())),
+            server_handler: None,
+            server_device_id: 0,
+            server_vendor_id: 0,
         })
     }
 
@@ -183,6 +216,9 @@ impl BacnetClient<BacnetIpTransport> {
             segmented_request_retries: 2,
             segment_ack_timeout: Duration::from_millis(500),
             capability_cache: std::sync::Arc::new(RwLock::new(HashMap::new())),
+            server_handler: None,
+            server_device_id: 0,
+            server_vendor_id: 0,
         })
     }
 
@@ -291,6 +327,9 @@ impl<D: DataLink> BacnetClient<D> {
             segmented_request_retries: 2,
             segment_ack_timeout: Duration::from_millis(500),
             capability_cache: std::sync::Arc::new(RwLock::new(HashMap::new())),
+            server_handler: None,
+            server_device_id: 0,
+            server_vendor_id: 0,
         }
     }
 
@@ -319,6 +358,55 @@ impl<D: DataLink> BacnetClient<D> {
     pub fn with_segment_ack_timeout(mut self, timeout: Duration) -> Self {
         self.segment_ack_timeout = timeout.max(Duration::from_millis(1));
         self
+    }
+
+    /// Attach a [`ServiceHandler`](crate::server::ServiceHandler) so that incoming service
+    /// requests (e.g. ReadProperty, WriteProperty, Who-Is) are dispatched inline while the
+    /// client waits for responses.  This avoids the need for a separate
+    /// [`BacnetServer`](crate::server::BacnetServer) sharing the same transport.
+    ///
+    /// `device_id` and `vendor_id` are used for I-Am responses.
+    pub fn with_server_handler(
+        mut self,
+        handler: std::sync::Arc<dyn crate::server::ServiceHandler>,
+        device_id: u32,
+        vendor_id: u16,
+    ) -> Self {
+        self.server_handler = Some(handler);
+        self.server_device_id = device_id;
+        self.server_vendor_id = vendor_id;
+        self
+    }
+
+    /// Non-blocking poll that receives and dispatches a single incoming server request.
+    ///
+    /// Call this periodically when the client is idle (not waiting for a response) to service
+    /// requests such as ReadProperty or Who-Is from other BACnet devices.
+    ///
+    /// Returns `Ok(())` regardless of whether a request was received or dispatched.
+    /// Returns `Err(ClientError::Timeout)` if no server handler has been configured.
+    pub async fn poll_server(&self) -> Result<(), ClientError> {
+        let handler = self
+            .server_handler
+            .as_ref()
+            .ok_or(ClientError::Timeout)?;
+        let _io_lock = self.request_io_lock.lock().await;
+        let mut buf = [0u8; 1500];
+        match tokio::time::timeout(Duration::from_millis(50), self.datalink.recv(&mut buf)).await {
+            Ok(Ok((n, src))) => {
+                let _ = dispatch_incoming_request(
+                    &self.datalink,
+                    handler.as_ref(),
+                    self.server_device_id,
+                    self.server_vendor_id,
+                    &buf[..n],
+                    src,
+                )
+                .await;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 
     async fn next_invoke_id(&self) -> u8 {
@@ -657,6 +745,18 @@ impl<D: DataLink> BacnetClient<D> {
             let mut rx = [0u8; 1500];
             let (n, src) = self.recv_ignoring_invalid_frame(&mut rx, deadline).await?;
             if src != address {
+                // Try to dispatch as an incoming server request
+                if let Some(ref handler) = self.server_handler {
+                    let _ = dispatch_incoming_request(
+                        &self.datalink,
+                        handler.as_ref(),
+                        self.server_device_id,
+                        self.server_vendor_id,
+                        &rx[..n],
+                        src,
+                    )
+                    .await;
+                }
                 continue;
             }
 
@@ -727,7 +827,21 @@ impl<D: DataLink> BacnetClient<D> {
                         });
                     }
                 }
-                _ => continue,
+                _ => {
+                    // Try to dispatch as an incoming server request
+                    if let Some(ref handler) = self.server_handler {
+                        let _ = dispatch_incoming_request(
+                            &self.datalink,
+                            handler.as_ref(),
+                            self.server_device_id,
+                            self.server_vendor_id,
+                            &rx[..n],
+                            src,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
             }
         }
 
@@ -1115,6 +1229,18 @@ impl<D: DataLink> BacnetClient<D> {
             let mut rx = [0u8; 1500];
             let (n, src) = self.recv_ignoring_invalid_frame(&mut rx, deadline).await?;
             if src != address {
+                // Try to dispatch as an incoming server request
+                if let Some(ref handler) = self.server_handler {
+                    let _ = dispatch_incoming_request(
+                        &self.datalink,
+                        handler.as_ref(),
+                        self.server_device_id,
+                        self.server_vendor_id,
+                        &rx[..n],
+                        src,
+                    )
+                    .await;
+                }
                 continue;
             }
             let apdu = extract_apdu(&rx[..n])?;
@@ -1151,7 +1277,21 @@ impl<D: DataLink> BacnetClient<D> {
                         });
                     }
                 }
-                _ => continue,
+                _ => {
+                    // Try to dispatch as an incoming server request
+                    if let Some(ref handler) = self.server_handler {
+                        let _ = dispatch_incoming_request(
+                            &self.datalink,
+                            handler.as_ref(),
+                            self.server_device_id,
+                            self.server_vendor_id,
+                            &rx[..n],
+                            src,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
             }
         }
         #[cfg(feature = "tracing")]
@@ -1176,6 +1316,18 @@ impl<D: DataLink> BacnetClient<D> {
             let mut rx = [0u8; 1500];
             let (n, src) = self.recv_ignoring_invalid_frame(&mut rx, deadline).await?;
             if src != address {
+                // Try to dispatch as an incoming server request
+                if let Some(ref handler) = self.server_handler {
+                    let _ = dispatch_incoming_request(
+                        &self.datalink,
+                        handler.as_ref(),
+                        self.server_device_id,
+                        self.server_vendor_id,
+                        &rx[..n],
+                        src,
+                    )
+                    .await;
+                }
                 continue;
             }
 
@@ -1223,7 +1375,21 @@ impl<D: DataLink> BacnetClient<D> {
                         });
                     }
                 }
-                _ => continue,
+                _ => {
+                    // Try to dispatch as an incoming server request
+                    if let Some(ref handler) = self.server_handler {
+                        let _ = dispatch_incoming_request(
+                            &self.datalink,
+                            handler.as_ref(),
+                            self.server_device_id,
+                            self.server_vendor_id,
+                            &rx[..n],
+                            src,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
             }
         }
         #[cfg(feature = "tracing")]
@@ -2124,6 +2290,851 @@ fn extract_apdu(payload: &[u8]) -> Result<&[u8], ClientError> {
     let mut r = Reader::new(payload);
     let _npdu = Npdu::decode(&mut r)?;
     r.read_exact(r.remaining()).map_err(ClientError::from)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inline server dispatch
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Handle an incoming BACnet service request on behalf of the client's inline server handler.
+///
+/// This is the core dispatch logic extracted from [`BacnetServer::handle_frame`] so that
+/// `BacnetClient` can service requests inline while waiting for its own responses.
+async fn dispatch_incoming_request<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    device_id: u32,
+    vendor_id: u16,
+    frame: &[u8],
+    source: DataLinkAddress,
+) -> Result<(), ClientError> {
+    let mut r = Reader::new(frame);
+    let _npdu = match Npdu::decode(&mut r) {
+        Ok(n) => n,
+        Err(_) => return Ok(()),
+    };
+
+    if r.is_empty() {
+        return Ok(());
+    }
+
+    let first = match r.peek_u8() {
+        Ok(b) => b,
+        Err(_) => return Ok(()),
+    };
+    let apdu_type = ApduType::from_u8(first >> 4);
+
+    match apdu_type {
+        Some(ApduType::UnconfirmedRequest) => {
+            let header = match UnconfirmedRequestHeader::decode(&mut r) {
+                Ok(h) => h,
+                Err(_) => return Ok(()),
+            };
+            if header.service_choice == 0x08 {
+                // Who-Is — check optional limits then respond with I-Am.
+                let limits = dispatch_decode_who_is_limits(&mut r);
+                if dispatch_matches_who_is(device_id, limits) {
+                    dispatch_send_i_am(datalink, device_id, vendor_id, source).await;
+                }
+            }
+            // All other unconfirmed services are ignored.
+        }
+        Some(ApduType::ConfirmedRequest) => {
+            let header = match ConfirmedRequestHeader::decode(&mut r) {
+                Ok(h) => h,
+                Err(_) => return Ok(()),
+            };
+            let invoke_id = header.invoke_id;
+            match header.service_choice {
+                SERVICE_READ_PROPERTY => {
+                    dispatch_handle_read_property(datalink, handler, &mut r, invoke_id, source)
+                        .await;
+                }
+                SERVICE_WRITE_PROPERTY => {
+                    dispatch_handle_write_property(datalink, handler, &mut r, invoke_id, source)
+                        .await;
+                }
+                SERVICE_READ_PROPERTY_MULTIPLE => {
+                    dispatch_handle_read_property_multiple(
+                        datalink, handler, &mut r, invoke_id, source,
+                    )
+                    .await;
+                }
+                SERVICE_WRITE_PROPERTY_MULTIPLE => {
+                    dispatch_handle_write_property_multiple(
+                        datalink, handler, &mut r, invoke_id, source,
+                    )
+                    .await;
+                }
+                SERVICE_SUBSCRIBE_COV => {
+                    dispatch_handle_subscribe_cov(datalink, handler, &mut r, invoke_id, source)
+                        .await;
+                }
+                SERVICE_CREATE_OBJECT => {
+                    dispatch_handle_create_object(datalink, handler, &mut r, invoke_id, source)
+                        .await;
+                }
+                SERVICE_DELETE_OBJECT => {
+                    dispatch_handle_delete_object(datalink, handler, &mut r, invoke_id, source)
+                        .await;
+                }
+                _ => {
+                    // Unknown service — send Reject with UNRECOGNIZED_SERVICE (0x08).
+                    dispatch_send_reject(datalink, invoke_id, 0x08, source).await;
+                }
+            }
+        }
+        _ => {
+            // Not a request — ignore.
+        }
+    }
+
+    Ok(())
+}
+
+// ── Inline dispatch helpers ──────────────────────────────────────────────────
+
+async fn dispatch_send_i_am<D: DataLink>(
+    datalink: &D,
+    device_id: u32,
+    vendor_id: u16,
+    target: DataLinkAddress,
+) {
+    let device_oid = ObjectId::new(ObjectType::Device, device_id);
+    let req = IAmRequest {
+        device_id: device_oid,
+        max_apdu: 1476,
+        segmentation: 3, // no-segmentation
+        vendor_id: vendor_id as u32,
+    };
+    let mut buf = [0u8; 128];
+    let mut w = Writer::new(&mut buf);
+    if Npdu::new(0).encode(&mut w).is_err() {
+        return;
+    }
+    if req.encode(&mut w).is_err() {
+        return;
+    }
+    let _ = datalink.send(target, w.as_written()).await;
+}
+
+async fn dispatch_handle_read_property<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    r: &mut Reader<'_>,
+    invoke_id: u8,
+    source: DataLinkAddress,
+) {
+    let object_id = match crate::decode_ctx_object_id(r) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let property_id_raw = match crate::decode_ctx_unsigned(r) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let property_id = PropertyId::from_u32(property_id_raw);
+
+    // Optional array index [2].
+    let array_index = dispatch_decode_optional_array_index(r);
+
+    match handler.read_property(object_id, property_id, array_index) {
+        Ok(value) => {
+            let borrowed = dispatch_client_value_to_borrowed(&value);
+            let mut buf = [0u8; 1400];
+            let mut w = Writer::new(&mut buf);
+            if Npdu::new(0).encode(&mut w).is_err() {
+                return;
+            }
+            if (ComplexAckHeader {
+                segmented: false,
+                more_follows: false,
+                invoke_id,
+                sequence_number: None,
+                proposed_window_size: None,
+                service_choice: SERVICE_READ_PROPERTY,
+            })
+            .encode(&mut w)
+            .is_err()
+            {
+                return;
+            }
+            if encode_ctx_unsigned(&mut w, 0, object_id.raw()).is_err() {
+                return;
+            }
+            if encode_ctx_unsigned(&mut w, 1, property_id.to_u32()).is_err() {
+                return;
+            }
+            if (Tag::Opening { tag_num: 3 }).encode(&mut w).is_err() {
+                return;
+            }
+            if encode_application_data_value(&mut w, &borrowed).is_err() {
+                return;
+            }
+            if (Tag::Closing { tag_num: 3 }).encode(&mut w).is_err() {
+                return;
+            }
+            let _ = datalink.send(source, w.as_written()).await;
+        }
+        Err(err) => {
+            dispatch_send_error(datalink, invoke_id, SERVICE_READ_PROPERTY, err, source).await;
+        }
+    }
+}
+
+async fn dispatch_handle_write_property<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    r: &mut Reader<'_>,
+    invoke_id: u8,
+    source: DataLinkAddress,
+) {
+    let object_id = match crate::decode_ctx_object_id(r) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let property_id_raw = match crate::decode_ctx_unsigned(r) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let property_id = PropertyId::from_u32(property_id_raw);
+
+    // Optional array index [2].
+    let next_tag = match Tag::decode(r) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let (array_index, value_start_tag) = match next_tag {
+        Tag::Context { tag_num: 2, len } => {
+            let idx = match decode_unsigned(r, len as usize) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let vt = match Tag::decode(r) {
+                Ok(t) => t,
+                Err(_) => return,
+            };
+            (Some(idx), vt)
+        }
+        other => (None, other),
+    };
+
+    if value_start_tag != (Tag::Opening { tag_num: 3 }) {
+        return;
+    }
+
+    let val = match rustbac_core::services::value_codec::decode_application_data_value(r) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    match Tag::decode(r) {
+        Ok(Tag::Closing { tag_num: 3 }) => {}
+        _ => return,
+    }
+
+    // Optional priority [4].
+    let priority = if !r.is_empty() {
+        match Tag::decode(r) {
+            Ok(Tag::Context { tag_num: 4, len }) => match decode_unsigned(r, len as usize) {
+                Ok(p) => Some(p as u8),
+                Err(_) => return,
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let client_val = crate::data_value_to_client(val);
+
+    match handler.write_property(object_id, property_id, array_index, client_val, priority) {
+        Ok(()) => {
+            let mut buf = [0u8; 32];
+            let mut w = Writer::new(&mut buf);
+            if Npdu::new(0).encode(&mut w).is_err() {
+                return;
+            }
+            if (SimpleAck {
+                invoke_id,
+                service_choice: SERVICE_WRITE_PROPERTY,
+            })
+            .encode(&mut w)
+            .is_err()
+            {
+                return;
+            }
+            let _ = datalink.send(source, w.as_written()).await;
+        }
+        Err(err) => {
+            dispatch_send_error(datalink, invoke_id, SERVICE_WRITE_PROPERTY, err, source).await;
+        }
+    }
+}
+
+async fn dispatch_handle_read_property_multiple<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    r: &mut Reader<'_>,
+    invoke_id: u8,
+    source: DataLinkAddress,
+) {
+    type PropRefs = Vec<(PropertyId, Option<u32>)>;
+    let mut specs: Vec<(ObjectId, PropRefs)> = Vec::new();
+
+    while !r.is_empty() {
+        let object_id = match crate::decode_ctx_object_id(r) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        match Tag::decode(r) {
+            Ok(Tag::Opening { tag_num: 1 }) => {}
+            _ => return,
+        }
+        let mut props: Vec<(PropertyId, Option<u32>)> = Vec::new();
+        loop {
+            let tag = match Tag::decode(r) {
+                Ok(t) => t,
+                Err(_) => return,
+            };
+            if tag == (Tag::Closing { tag_num: 1 }) {
+                break;
+            }
+            let property_id = match tag {
+                Tag::Context { tag_num: 0, len } => match decode_unsigned(r, len as usize) {
+                    Ok(v) => PropertyId::from_u32(v),
+                    Err(_) => return,
+                },
+                _ => return,
+            };
+            let array_index = if !r.is_empty() {
+                match dispatch_peek_context_tag(r, 1) {
+                    Some(len) => {
+                        match Tag::decode(r) {
+                            Ok(_) => {}
+                            Err(_) => return,
+                        }
+                        match decode_unsigned(r, len as usize) {
+                            Ok(idx) => Some(idx),
+                            Err(_) => return,
+                        }
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
+            props.push((property_id, array_index));
+        }
+        specs.push((object_id, props));
+    }
+
+    let mut buf = [0u8; 1400];
+    let mut w = Writer::new(&mut buf);
+    if Npdu::new(0).encode(&mut w).is_err() {
+        return;
+    }
+    if (ComplexAckHeader {
+        segmented: false,
+        more_follows: false,
+        invoke_id,
+        sequence_number: None,
+        proposed_window_size: None,
+        service_choice: SERVICE_READ_PROPERTY_MULTIPLE,
+    })
+    .encode(&mut w)
+    .is_err()
+    {
+        return;
+    }
+
+    for (object_id, props) in &specs {
+        if encode_ctx_unsigned(&mut w, 0, object_id.raw()).is_err() {
+            return;
+        }
+        if (Tag::Opening { tag_num: 1 }).encode(&mut w).is_err() {
+            return;
+        }
+
+        for (property_id, array_index) in props {
+            if encode_ctx_unsigned(&mut w, 2, property_id.to_u32()).is_err() {
+                return;
+            }
+            if let Some(idx) = array_index {
+                if encode_ctx_unsigned(&mut w, 3, *idx).is_err() {
+                    return;
+                }
+            }
+            if (Tag::Opening { tag_num: 4 }).encode(&mut w).is_err() {
+                return;
+            }
+
+            match handler.read_property(*object_id, *property_id, *array_index) {
+                Ok(value) => {
+                    let borrowed = dispatch_client_value_to_borrowed(&value);
+                    if encode_application_data_value(&mut w, &borrowed).is_err() {
+                        return;
+                    }
+                }
+                Err(err) => {
+                    let (class, code) = dispatch_error_class_code(err);
+                    if (Tag::Opening { tag_num: 5 }).encode(&mut w).is_err() {
+                        return;
+                    }
+                    if encode_ctx_unsigned(&mut w, 0, class as u32).is_err() {
+                        return;
+                    }
+                    if encode_ctx_unsigned(&mut w, 1, code as u32).is_err() {
+                        return;
+                    }
+                    if (Tag::Closing { tag_num: 5 }).encode(&mut w).is_err() {
+                        return;
+                    }
+                }
+            }
+
+            if (Tag::Closing { tag_num: 4 }).encode(&mut w).is_err() {
+                return;
+            }
+        }
+
+        if (Tag::Closing { tag_num: 1 }).encode(&mut w).is_err() {
+            return;
+        }
+    }
+
+    let _ = datalink.send(source, w.as_written()).await;
+}
+
+async fn dispatch_handle_write_property_multiple<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    r: &mut Reader<'_>,
+    invoke_id: u8,
+    source: DataLinkAddress,
+) {
+    while !r.is_empty() {
+        let object_id = match crate::decode_ctx_object_id(r) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        match Tag::decode(r) {
+            Ok(Tag::Opening { tag_num: 1 }) => {}
+            _ => return,
+        }
+        loop {
+            let tag = match Tag::decode(r) {
+                Ok(t) => t,
+                Err(_) => return,
+            };
+            if tag == (Tag::Closing { tag_num: 1 }) {
+                break;
+            }
+            let property_id = match tag {
+                Tag::Context { tag_num: 0, len } => match decode_unsigned(r, len as usize) {
+                    Ok(v) => PropertyId::from_u32(v),
+                    Err(_) => return,
+                },
+                _ => return,
+            };
+            let array_index = if !r.is_empty() {
+                match dispatch_peek_context_tag(r, 1) {
+                    Some(len) => {
+                        let _ = Tag::decode(r);
+                        decode_unsigned(r, len as usize).ok()
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
+            match Tag::decode(r) {
+                Ok(Tag::Opening { tag_num: 2 }) => {}
+                _ => return,
+            }
+            let val = match rustbac_core::services::value_codec::decode_application_data_value(r) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            match Tag::decode(r) {
+                Ok(Tag::Closing { tag_num: 2 }) => {}
+                _ => return,
+            }
+            let priority = if !r.is_empty() {
+                match dispatch_peek_context_tag(r, 3) {
+                    Some(len) => {
+                        let _ = Tag::decode(r);
+                        decode_unsigned(r, len as usize).ok().map(|p| p as u8)
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let client_val = crate::data_value_to_client(val);
+            if let Err(err) =
+                handler.write_property(object_id, property_id, array_index, client_val, priority)
+            {
+                dispatch_send_error(
+                    datalink,
+                    invoke_id,
+                    SERVICE_WRITE_PROPERTY_MULTIPLE,
+                    err,
+                    source,
+                )
+                .await;
+                return;
+            }
+        }
+    }
+    // All properties written successfully — send SimpleAck.
+    let mut buf = [0u8; 32];
+    let mut w = Writer::new(&mut buf);
+    if Npdu::new(0).encode(&mut w).is_err() {
+        return;
+    }
+    if (SimpleAck {
+        invoke_id,
+        service_choice: SERVICE_WRITE_PROPERTY_MULTIPLE,
+    })
+    .encode(&mut w)
+    .is_err()
+    {
+        return;
+    }
+    let _ = datalink.send(source, w.as_written()).await;
+}
+
+async fn dispatch_handle_subscribe_cov<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    r: &mut Reader<'_>,
+    invoke_id: u8,
+    source: DataLinkAddress,
+) {
+    // subscriberProcessIdentifier [0]
+    let subscriber_process_id = match Tag::decode(r) {
+        Ok(Tag::Context { tag_num: 0, len }) => match decode_unsigned(r, len as usize) {
+            Ok(v) => v,
+            Err(_) => return,
+        },
+        _ => return,
+    };
+    // monitoredObjectIdentifier [1]
+    let monitored_object_id = match crate::decode_ctx_object_id(r) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    // issueConfirmedNotifications [2]
+    let issue_confirmed = match Tag::decode(r) {
+        Ok(Tag::Context { tag_num: 2, len }) => match decode_unsigned(r, len as usize) {
+            Ok(v) => v != 0,
+            Err(_) => return,
+        },
+        _ => return,
+    };
+    // optional lifetime [3]
+    let lifetime = if !r.is_empty() {
+        match dispatch_peek_context_tag(r, 3) {
+            Some(len) => {
+                let _ = Tag::decode(r);
+                decode_unsigned(r, len as usize).ok()
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    match handler.subscribe_cov(
+        subscriber_process_id,
+        monitored_object_id,
+        issue_confirmed,
+        lifetime,
+    ) {
+        Ok(()) => {
+            let mut buf = [0u8; 32];
+            let mut w = Writer::new(&mut buf);
+            if Npdu::new(0).encode(&mut w).is_err() {
+                return;
+            }
+            if (SimpleAck {
+                invoke_id,
+                service_choice: SERVICE_SUBSCRIBE_COV,
+            })
+            .encode(&mut w)
+            .is_err()
+            {
+                return;
+            }
+            let _ = datalink.send(source, w.as_written()).await;
+        }
+        Err(err) => {
+            dispatch_send_error(datalink, invoke_id, SERVICE_SUBSCRIBE_COV, err, source).await;
+        }
+    }
+}
+
+async fn dispatch_handle_create_object<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    r: &mut Reader<'_>,
+    invoke_id: u8,
+    source: DataLinkAddress,
+) {
+    // objectSpecifier [0] opening
+    match Tag::decode(r) {
+        Ok(Tag::Opening { tag_num: 0 }) => {}
+        _ => return,
+    }
+    // objectType [0] — context-tagged enumerated
+    let object_type_raw = match Tag::decode(r) {
+        Ok(Tag::Context { tag_num: 0, len }) => match decode_unsigned(r, len as usize) {
+            Ok(v) => v,
+            Err(_) => return,
+        },
+        _ => return,
+    };
+    let object_type = ObjectType::from_u16(object_type_raw as u16);
+    // objectSpecifier [0] closing
+    match Tag::decode(r) {
+        Ok(Tag::Closing { tag_num: 0 }) => {}
+        _ => return,
+    }
+
+    match handler.create_object(object_type) {
+        Ok(created_id) => {
+            let mut buf = [0u8; 64];
+            let mut w = Writer::new(&mut buf);
+            if Npdu::new(0).encode(&mut w).is_err() {
+                return;
+            }
+            if (ComplexAckHeader {
+                segmented: false,
+                more_follows: false,
+                invoke_id,
+                sequence_number: None,
+                proposed_window_size: None,
+                service_choice: SERVICE_CREATE_OBJECT,
+            })
+            .encode(&mut w)
+            .is_err()
+            {
+                return;
+            }
+            if encode_ctx_unsigned(&mut w, 0, created_id.raw()).is_err() {
+                return;
+            }
+            let _ = datalink.send(source, w.as_written()).await;
+        }
+        Err(err) => {
+            dispatch_send_error(datalink, invoke_id, SERVICE_CREATE_OBJECT, err, source).await;
+        }
+    }
+}
+
+async fn dispatch_handle_delete_object<D: DataLink>(
+    datalink: &D,
+    handler: &dyn crate::server::ServiceHandler,
+    r: &mut Reader<'_>,
+    invoke_id: u8,
+    source: DataLinkAddress,
+) {
+    let object_id = match crate::decode_ctx_object_id(r) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    match handler.delete_object(object_id) {
+        Ok(()) => {
+            let mut buf = [0u8; 32];
+            let mut w = Writer::new(&mut buf);
+            if Npdu::new(0).encode(&mut w).is_err() {
+                return;
+            }
+            if (SimpleAck {
+                invoke_id,
+                service_choice: SERVICE_DELETE_OBJECT,
+            })
+            .encode(&mut w)
+            .is_err()
+            {
+                return;
+            }
+            let _ = datalink.send(source, w.as_written()).await;
+        }
+        Err(err) => {
+            dispatch_send_error(datalink, invoke_id, SERVICE_DELETE_OBJECT, err, source).await;
+        }
+    }
+}
+
+async fn dispatch_send_error<D: DataLink>(
+    datalink: &D,
+    invoke_id: u8,
+    service_choice: u8,
+    err: crate::server::BacnetServiceError,
+    target: DataLinkAddress,
+) {
+    let (class, code) = dispatch_error_class_code(err);
+    let mut buf = [0u8; 64];
+    let mut w = Writer::new(&mut buf);
+    if Npdu::new(0).encode(&mut w).is_err() {
+        return;
+    }
+    // Error PDU header: type=5 (Error)
+    if w.write_u8(0x50).is_err() {
+        return;
+    }
+    if w.write_u8(invoke_id).is_err() {
+        return;
+    }
+    if w.write_u8(service_choice).is_err() {
+        return;
+    }
+    // error-class: application Enumerated
+    if (Tag::Application {
+        tag: rustbac_core::encoding::tag::AppTag::Enumerated,
+        len: 1,
+    })
+    .encode(&mut w)
+    .is_err()
+    {
+        return;
+    }
+    if w.write_u8(class).is_err() {
+        return;
+    }
+    // error-code: application Enumerated
+    if (Tag::Application {
+        tag: rustbac_core::encoding::tag::AppTag::Enumerated,
+        len: 1,
+    })
+    .encode(&mut w)
+    .is_err()
+    {
+        return;
+    }
+    if w.write_u8(code).is_err() {
+        return;
+    }
+    let _ = datalink.send(target, w.as_written()).await;
+}
+
+async fn dispatch_send_reject<D: DataLink>(
+    datalink: &D,
+    invoke_id: u8,
+    reason: u8,
+    target: DataLinkAddress,
+) {
+    let mut buf = [0u8; 16];
+    let mut w = Writer::new(&mut buf);
+    if Npdu::new(0).encode(&mut w).is_err() {
+        return;
+    }
+    // Reject PDU: type=6 (Reject)
+    if w.write_u8(0x60).is_err() {
+        return;
+    }
+    if w.write_u8(invoke_id).is_err() {
+        return;
+    }
+    if w.write_u8(reason).is_err() {
+        return;
+    }
+    let _ = datalink.send(target, w.as_written()).await;
+}
+
+/// Decode Who-Is optional [0] low-limit and [1] high-limit (dispatch-local copy).
+fn dispatch_decode_who_is_limits(r: &mut Reader<'_>) -> Option<(u32, u32)> {
+    if r.is_empty() {
+        return None;
+    }
+    let tag0 = Tag::decode(r).ok()?;
+    let low = match tag0 {
+        Tag::Context { tag_num: 0, len } => decode_unsigned(r, len as usize).ok()?,
+        _ => return None,
+    };
+    let tag1 = Tag::decode(r).ok()?;
+    let high = match tag1 {
+        Tag::Context { tag_num: 1, len } => decode_unsigned(r, len as usize).ok()?,
+        _ => return None,
+    };
+    Some((low, high))
+}
+
+fn dispatch_error_class_code(err: crate::server::BacnetServiceError) -> (u8, u8) {
+    use crate::server::BacnetServiceError;
+    match err {
+        BacnetServiceError::UnknownObject => (1, 31),
+        BacnetServiceError::UnknownProperty => (2, 32),
+        BacnetServiceError::WriteAccessDenied => (2, 40),
+        BacnetServiceError::InvalidDataType => (2, 9),
+        BacnetServiceError::ServiceNotSupported => (5, 53),
+    }
+}
+
+fn dispatch_matches_who_is(device_id: u32, limits: Option<(u32, u32)>) -> bool {
+    match limits {
+        None => true,
+        Some((low, high)) => device_id >= low && device_id <= high,
+    }
+}
+
+fn dispatch_decode_optional_array_index(r: &mut Reader<'_>) -> Option<u32> {
+    if r.is_empty() {
+        return None;
+    }
+    let tag = Tag::decode(r).ok()?;
+    match tag {
+        Tag::Context { tag_num: 2, len } => decode_unsigned(r, len as usize).ok(),
+        _ => None,
+    }
+}
+
+fn dispatch_peek_context_tag(r: &mut Reader<'_>, tag_num: u8) -> Option<u32> {
+    let first = r.peek_u8().ok()?;
+    let is_context = (first & 0x08) != 0 && (first & 0x07) < 6;
+    if !is_context {
+        return None;
+    }
+    let this_tag_num = first >> 4;
+    if this_tag_num != tag_num {
+        return None;
+    }
+    let short_len = first & 0x07;
+    if short_len < 5 {
+        Some(short_len as u32)
+    } else {
+        None
+    }
+}
+
+fn dispatch_client_value_to_borrowed(val: &ClientDataValue) -> DataValue<'_> {
+    match val {
+        ClientDataValue::Null => DataValue::Null,
+        ClientDataValue::Boolean(v) => DataValue::Boolean(*v),
+        ClientDataValue::Unsigned(v) => DataValue::Unsigned(*v),
+        ClientDataValue::Signed(v) => DataValue::Signed(*v),
+        ClientDataValue::Real(v) => DataValue::Real(*v),
+        ClientDataValue::Double(v) => DataValue::Double(*v),
+        ClientDataValue::OctetString(v) => DataValue::OctetString(v),
+        ClientDataValue::CharacterString(v) => DataValue::CharacterString(v),
+        ClientDataValue::BitString { unused_bits, data } => {
+            DataValue::BitString(rustbac_core::types::BitString {
+                unused_bits: *unused_bits,
+                data,
+            })
+        }
+        ClientDataValue::Enumerated(v) => DataValue::Enumerated(*v),
+        ClientDataValue::Date(v) => DataValue::Date(*v),
+        ClientDataValue::Time(v) => DataValue::Time(*v),
+        ClientDataValue::ObjectId(v) => DataValue::ObjectId(*v),
+        ClientDataValue::Constructed { tag_num, values } => DataValue::Constructed {
+            tag_num: *tag_num,
+            values: values.iter().map(dispatch_client_value_to_borrowed).collect(),
+        },
+    }
 }
 
 fn remote_service_error(err: BacnetError) -> ClientError {

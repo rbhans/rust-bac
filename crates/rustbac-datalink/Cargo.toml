@@ -11,7 +11,7 @@ repository = "https://github.com/rbhans/rust-bac"
 serde = ["dep:serde", "rustbac-core/serde"]
 
 [dependencies]
-rustbac-core = { path = "../rustbac-core", version = "0.3.1" }
+rustbac-core = { path = "../rustbac-core", version = "0.3.2" }
 thiserror.workspace = true
 tokio.workspace = true
 log.workspace = true

@@ -5,13 +5,14 @@ members = [
   "crates/rustbac-bacnet-sc",
   "crates/rustbac-client",
   "crates/rustbac-mstp",
+  "crates/rustbac-router",
   "crates/rustbac-tools",
   "fuzz",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"

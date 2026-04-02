@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-bacnet-sc"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "futures-util",
  "log",
@@ -868,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-client"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "env_logger",
  "log",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "defmt 0.3.100",
  "proptest",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-datalink"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "log",
  "rustbac-core",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "rustbac-mstp"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "log",
  "rustbac-datalink",
@@ -922,8 +922,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustbac-router"
+version = "0.4.0"
+dependencies = [
+ "log",
+ "rustbac-core",
+ "rustbac-datalink",
+ "tokio",
+]
+
+[[package]]
 name = "rustbac-tools"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "clap",
  "env_logger",

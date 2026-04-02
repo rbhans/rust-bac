@@ -26,6 +26,7 @@ pub enum PropertyId {
     InactiveText,
     LimitEnable,
     ListOfObjectPropertyReferences,
+    Location,
     LogBuffer,
     LogDeviceObjectProperty,
     LogInterval,
@@ -90,6 +91,7 @@ impl PropertyId {
             Self::InactiveText => 46,
             Self::LimitEnable => 52,
             Self::ListOfObjectPropertyReferences => 78,
+            Self::Location => 56,
             Self::LogBuffer => 131,
             Self::LogDeviceObjectProperty => 132,
             Self::LogInterval => 134,
@@ -153,6 +155,7 @@ impl PropertyId {
             45 => Self::HighLimit,
             46 => Self::InactiveText,
             52 => Self::LimitEnable,
+            56 => Self::Location,
             78 => Self::ListOfObjectPropertyReferences,
             131 => Self::LogBuffer,
             132 => Self::LogDeviceObjectProperty,
@@ -222,6 +225,7 @@ impl PropertyId {
             "inactive-text" => Some(Self::InactiveText),
             "limit-enable" => Some(Self::LimitEnable),
             "list-of-object-property-references" => Some(Self::ListOfObjectPropertyReferences),
+            "location" => Some(Self::Location),
             "log-buffer" => Some(Self::LogBuffer),
             "log-device-object-property" => Some(Self::LogDeviceObjectProperty),
             "log-interval" => Some(Self::LogInterval),
@@ -290,6 +294,7 @@ impl core::fmt::Display for PropertyId {
             Self::ListOfObjectPropertyReferences => {
                 f.write_str("list-of-object-property-references")
             }
+            Self::Location => f.write_str("location"),
             Self::LogBuffer => f.write_str("log-buffer"),
             Self::LogDeviceObjectProperty => f.write_str("log-device-object-property"),
             Self::LogInterval => f.write_str("log-interval"),

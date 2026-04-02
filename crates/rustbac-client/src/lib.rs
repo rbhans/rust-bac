@@ -37,6 +37,10 @@ pub mod throttle;
 pub mod value;
 /// Device discovery walk — reads all objects and their properties.
 pub mod walk;
+/// Server-side intrinsic reporting engine.
+pub mod intrinsic;
+/// PICS (Protocol Implementation Conformance Statement) document generation.
+pub mod pics;
 
 pub use alarm::{
     AlarmSummaryItem, EnrollmentSummaryItem, EventInformationItem, EventInformationResult,
@@ -66,6 +70,11 @@ pub use simulator::SimulatedDevice;
 pub use throttle::DeviceThrottle;
 pub use value::ClientDataValue;
 pub use walk::{DeviceInfo, DeviceWalkResult, ObjectSummary};
+pub use intrinsic::{
+    AckedTransitions, IntrinsicAlgorithm, IntrinsicEnrollment, IntrinsicEventState,
+    IntrinsicReportingEngine, PendingEventNotification,
+};
+pub use pics::{PicsDocument, SegmentationSupport, SupportedObjectType, SupportedService};
 
 // Internal helpers used by simulator module.
 use rustbac_core::encoding::{primitives::decode_unsigned, reader::Reader, tag::Tag};

@@ -25,6 +25,12 @@ pub struct DeviceInfo {
     pub vendor_name: Option<String>,
     pub model_name: Option<String>,
     pub firmware_revision: Option<String>,
+    pub location: Option<String>,
+    pub description: Option<String>,
+    pub max_apdu_length: Option<u32>,
+    pub segmentation_supported: Option<u32>,
+    pub protocol_version: Option<u32>,
+    pub application_software_version: Option<String>,
 }
 
 /// Result of a full device walk.
@@ -98,6 +104,12 @@ async fn read_device_info<D: DataLink>(
         PropertyId::VendorName,
         PropertyId::ModelName,
         PropertyId::FirmwareRevision,
+        PropertyId::Location,
+        PropertyId::Description,
+        PropertyId::MaxApduLengthAccepted,
+        PropertyId::SegmentationSupported,
+        PropertyId::ProtocolVersion,
+        PropertyId::ApplicationSoftwareVersion,
     ];
 
     let prop_values = match client
@@ -110,13 +122,35 @@ async fn read_device_info<D: DataLink>(
 
     let mut info = DeviceInfo::default();
     for (pid, val) in &prop_values {
-        if let ClientDataValue::CharacterString(s) = val {
-            match pid {
-                PropertyId::VendorName => info.vendor_name = Some(s.clone()),
-                PropertyId::ModelName => info.model_name = Some(s.clone()),
-                PropertyId::FirmwareRevision => info.firmware_revision = Some(s.clone()),
-                _ => {}
+        match (pid, val) {
+            (PropertyId::VendorName, ClientDataValue::CharacterString(s)) => {
+                info.vendor_name = Some(s.clone());
             }
+            (PropertyId::ModelName, ClientDataValue::CharacterString(s)) => {
+                info.model_name = Some(s.clone());
+            }
+            (PropertyId::FirmwareRevision, ClientDataValue::CharacterString(s)) => {
+                info.firmware_revision = Some(s.clone());
+            }
+            (PropertyId::Location, ClientDataValue::CharacterString(s)) => {
+                info.location = Some(s.clone());
+            }
+            (PropertyId::Description, ClientDataValue::CharacterString(s)) => {
+                info.description = Some(s.clone());
+            }
+            (PropertyId::MaxApduLengthAccepted, ClientDataValue::Unsigned(v)) => {
+                info.max_apdu_length = Some(*v);
+            }
+            (PropertyId::SegmentationSupported, ClientDataValue::Enumerated(v)) => {
+                info.segmentation_supported = Some(*v);
+            }
+            (PropertyId::ProtocolVersion, ClientDataValue::Unsigned(v)) => {
+                info.protocol_version = Some(*v);
+            }
+            (PropertyId::ApplicationSoftwareVersion, ClientDataValue::CharacterString(s)) => {
+                info.application_software_version = Some(s.clone());
+            }
+            _ => {}
         }
     }
     info

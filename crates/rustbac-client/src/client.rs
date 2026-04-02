@@ -310,6 +310,23 @@ impl BacnetClient<BacnetIpTransport> {
     }
 }
 
+impl BacnetClient<rustbac_datalink::bip6::transport::BacnetIp6Transport> {
+    /// Create a BACnet/IPv6 client using UDP multicast.
+    ///
+    /// # Arguments
+    /// * `multicast` — The IPv6 multicast group (default: `FF05::BAC0`).
+    /// * `if_index` — The network interface index for multicast membership.
+    pub async fn new_ipv6(
+        multicast: std::net::Ipv6Addr,
+        if_index: u32,
+    ) -> Result<Self, ClientError> {
+        use rustbac_datalink::bip6::transport::BacnetIp6Transport;
+        let bind_addr = std::net::SocketAddrV6::new(std::net::Ipv6Addr::UNSPECIFIED, 47808, 0, 0);
+        let datalink = BacnetIp6Transport::bind(bind_addr, multicast, if_index).await?;
+        Ok(Self::with_datalink(datalink))
+    }
+}
+
 impl BacnetClient<BacnetScTransport> {
     /// Create a BACnet/SC client by connecting to the WebSocket hub at `endpoint`
     /// (e.g. `"wss://hub.example.com:47808/bacnet"`).

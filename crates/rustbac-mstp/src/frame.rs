@@ -2,6 +2,9 @@
 //!
 //! Implements the frame structure from ASHRAE 135 Clause 9.
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 use crate::crc;
 
 /// MS/TP preamble bytes.

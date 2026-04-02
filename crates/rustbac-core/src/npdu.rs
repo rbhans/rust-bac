@@ -9,8 +9,8 @@ pub const NPDU_VERSION: u8 = 0x01;
 pub struct NpduAddress {
     /// The DNET/SNET network number.
     pub network: u16,
-    /// MAC address bytes (up to 6).
-    pub mac: [u8; 6],
+    /// MAC address bytes (up to 18 — supports IPv6 virtual MACs: 16-byte addr + 2-byte port).
+    pub mac: [u8; 18],
     /// Number of valid bytes in `mac`.
     pub mac_len: u8,
 }
@@ -136,10 +136,10 @@ fn encode_addr(w: &mut Writer<'_>, addr: NpduAddress) -> Result<(), EncodeError>
 fn decode_addr(r: &mut Reader<'_>) -> Result<NpduAddress, DecodeError> {
     let network = r.read_be_u16()?;
     let mac_len = r.read_u8()?;
-    if mac_len as usize > 6 {
+    if mac_len as usize > 18 {
         return Err(DecodeError::InvalidLength);
     }
-    let mut mac = [0u8; 6];
+    let mut mac = [0u8; 18];
     let src = r.read_exact(mac_len as usize)?;
     mac[..mac_len as usize].copy_from_slice(src);
     Ok(NpduAddress {
@@ -159,7 +159,11 @@ mod tests {
         let mut p = Npdu::new(0x20);
         p.destination = Some(NpduAddress {
             network: 1,
-            mac: [192, 168, 1, 2, 0xBA, 0xC0],
+            mac: {
+                let mut m = [0u8; 18];
+                m[..6].copy_from_slice(&[192, 168, 1, 2, 0xBA, 0xC0]);
+                m
+            },
             mac_len: 6,
         });
         p.hop_count = Some(255);
@@ -172,6 +176,34 @@ mod tests {
         let dec = Npdu::decode(&mut r).unwrap();
         assert_eq!(dec.control, p.control);
         assert_eq!(dec.destination.unwrap().network, 1);
+    }
+
+    #[test]
+    fn npdu_ipv6_mac_roundtrip() {
+        let mut p = Npdu::new(0x20);
+        // 18-byte virtual MAC: 16 bytes IPv6 + 2 bytes port
+        let mut mac = [0u8; 18];
+        mac[..16].copy_from_slice(&[
+            0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0x02, 0x0c, 0x29, 0xff, 0xfe, 0x5a, 0x1c, 0x3d,
+        ]);
+        mac[16..].copy_from_slice(&0xBAC0u16.to_be_bytes());
+        p.destination = Some(NpduAddress {
+            network: 2,
+            mac,
+            mac_len: 18,
+        });
+        p.hop_count = Some(255);
+
+        let mut buf = [0u8; 48];
+        let mut w = Writer::new(&mut buf);
+        p.encode(&mut w).unwrap();
+
+        let mut r = Reader::new(w.as_written());
+        let dec = Npdu::decode(&mut r).unwrap();
+        let dest = dec.destination.unwrap();
+        assert_eq!(dest.network, 2);
+        assert_eq!(dest.mac_len, 18);
+        assert_eq!(&dest.mac[..18], &mac[..]);
     }
 
     #[test]

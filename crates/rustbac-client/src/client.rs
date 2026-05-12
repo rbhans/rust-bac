@@ -2078,7 +2078,12 @@ impl<D: DataLink> BacnetClient<D> {
                 continue;
             }
             for item in access.results {
-                out.push((item.property_id, into_client_value(item.value)?));
+                // Per-property errors are skipped so the caller sees the
+                // properties that did decode successfully. Callers needing
+                // explicit error visibility should decode the ACK directly.
+                if let Ok(value) = item.value {
+                    out.push((item.property_id, into_client_value(value)?));
+                }
             }
         }
         Ok(out)
@@ -2210,7 +2215,8 @@ impl<D: DataLink> BacnetClient<D> {
         let mut out = HashMap::new();
         for access in parsed.results {
             for item in access.results {
-                if let Ok(v) = into_client_value(item.value) {
+                let Ok(value) = item.value else { continue };
+                if let Ok(v) = into_client_value(value) {
                     out.insert((access.object_id, item.property_id), v);
                 }
             }
@@ -2249,6 +2255,10 @@ impl<D: DataLink> BacnetClient<D> {
                 ClientDataValue::Date(d) => DV::Date(*d),
                 ClientDataValue::Time(t) => DV::Time(*t),
                 ClientDataValue::ObjectId(o) => DV::ObjectId(*o),
+                ClientDataValue::ContextTagged { tag_num, data } => DV::ContextTagged {
+                    tag_num: *tag_num,
+                    data,
+                },
                 ClientDataValue::Constructed { tag_num, values } => DV::Constructed {
                     tag_num: *tag_num,
                     values: values.iter().map(cv_to_dv).collect(),
@@ -3150,6 +3160,10 @@ fn dispatch_client_value_to_borrowed(val: &ClientDataValue) -> DataValue<'_> {
         ClientDataValue::Date(v) => DataValue::Date(*v),
         ClientDataValue::Time(v) => DataValue::Time(*v),
         ClientDataValue::ObjectId(v) => DataValue::ObjectId(*v),
+        ClientDataValue::ContextTagged { tag_num, data } => DataValue::ContextTagged {
+            tag_num: *tag_num,
+            data,
+        },
         ClientDataValue::Constructed { tag_num, values } => DataValue::Constructed {
             tag_num: *tag_num,
             values: values
@@ -3188,6 +3202,10 @@ fn into_client_value(value: DataValue<'_>) -> Result<ClientDataValue, ClientErro
         DataValue::Date(v) => ClientDataValue::Date(v),
         DataValue::Time(v) => ClientDataValue::Time(v),
         DataValue::ObjectId(v) => ClientDataValue::ObjectId(v),
+        DataValue::ContextTagged { tag_num, data } => ClientDataValue::ContextTagged {
+            tag_num,
+            data: data.to_vec(),
+        },
         DataValue::Constructed { tag_num, values } => {
             let mut children = Vec::with_capacity(values.len());
             for child in values {

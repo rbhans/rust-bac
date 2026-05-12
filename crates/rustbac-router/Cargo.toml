@@ -8,7 +8,7 @@ description = "BACnet network router — multi-port frame forwarding and routing
 repository = "https://github.com/rbhans/rust-bac"
 
 [dependencies]
-rustbac-core = { path = "../rustbac-core", version = "0.4.0" }
-rustbac-datalink = { path = "../rustbac-datalink", version = "0.4.0" }
+rustbac-core = { path = "../rustbac-core", version = "0.4.1" }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.4.1" }
 tokio = { workspace = true }
 log = { workspace = true }

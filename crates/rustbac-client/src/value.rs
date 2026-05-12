@@ -37,6 +37,11 @@ pub enum ClientDataValue {
     Time(Time),
     /// BACnet ObjectIdentifier — encodes both the object type and instance number.
     ObjectId(rustbac_core::types::ObjectId),
+    /// A context-tagged primitive value carried inside a constructed sequence
+    /// (typically as a CHOICE arm — e.g. `BACnetPriorityValue` slots in a
+    /// `priority-array`). `data` is the opaque payload; the caller interprets
+    /// it based on the surrounding property's choice semantics.
+    ContextTagged { tag_num: u8, data: Vec<u8> },
     /// A constructed (complex) value containing a sequence of child values.
     ///
     /// `tag_num` is the context tag number of the opening/closing tag pair.

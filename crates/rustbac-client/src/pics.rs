@@ -74,22 +74,47 @@ impl PicsDocument {
     /// Render the PICS document in ASHRAE 135 Annex A text format.
     pub fn to_text(&self) -> String {
         let mut out = String::new();
-        out.push_str("==============================================================================\n");
+        out.push_str(
+            "==============================================================================\n",
+        );
         out.push_str("  BACnet Protocol Implementation Conformance Statement (PICS)\n");
-        out.push_str("==============================================================================\n\n");
+        out.push_str(
+            "==============================================================================\n\n",
+        );
 
         out.push_str("-- Product Identification --\n\n");
         out.push_str(&format!("  Vendor Name:            {}\n", self.vendor_name));
-        out.push_str(&format!("  Product Name:           {}\n", self.product_name));
-        out.push_str(&format!("  Product Model Number:   {}\n", self.product_model_number));
-        out.push_str(&format!("  Firmware Revision:      {}\n", self.firmware_revision));
+        out.push_str(&format!(
+            "  Product Name:           {}\n",
+            self.product_name
+        ));
+        out.push_str(&format!(
+            "  Product Model Number:   {}\n",
+            self.product_model_number
+        ));
+        out.push_str(&format!(
+            "  Firmware Revision:      {}\n",
+            self.firmware_revision
+        ));
         out.push_str("\n");
 
         out.push_str("-- BACnet Protocol --\n\n");
-        out.push_str(&format!("  BACnet Protocol Version:    {}\n", self.protocol_version));
-        out.push_str(&format!("  BACnet Protocol Revision:   {}\n", self.protocol_revision));
-        out.push_str(&format!("  Max APDU Length Accepted:   {}\n", self.max_apdu_length));
-        out.push_str(&format!("  Segmentation Supported:     {}\n", self.segmentation_supported.as_str()));
+        out.push_str(&format!(
+            "  BACnet Protocol Version:    {}\n",
+            self.protocol_version
+        ));
+        out.push_str(&format!(
+            "  BACnet Protocol Revision:   {}\n",
+            self.protocol_revision
+        ));
+        out.push_str(&format!(
+            "  Max APDU Length Accepted:   {}\n",
+            self.max_apdu_length
+        ));
+        out.push_str(&format!(
+            "  Segmentation Supported:     {}\n",
+            self.segmentation_supported.as_str()
+        ));
         out.push_str("\n");
 
         out.push_str("-- Supported Services --\n\n");

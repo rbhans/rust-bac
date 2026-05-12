@@ -1169,6 +1169,10 @@ fn client_value_to_borrowed(val: &ClientDataValue) -> rustbac_core::types::DataV
         ClientDataValue::Date(v) => DataValue::Date(*v),
         ClientDataValue::Time(v) => DataValue::Time(*v),
         ClientDataValue::ObjectId(v) => DataValue::ObjectId(*v),
+        ClientDataValue::ContextTagged { tag_num, data } => DataValue::ContextTagged {
+            tag_num: *tag_num,
+            data,
+        },
         ClientDataValue::Constructed { tag_num, values } => DataValue::Constructed {
             tag_num: *tag_num,
             values: values.iter().map(client_value_to_borrowed).collect(),
@@ -1418,10 +1422,10 @@ mod tests {
     async fn object_store_set_get_remove() {
         let store = ObjectStore::new();
         let oid = ObjectId::new(ObjectType::AnalogValue, 1);
-        store.set(oid, PropertyId::PresentValue, ClientDataValue::Real(3.14));
+        store.set(oid, PropertyId::PresentValue, ClientDataValue::Real(3.5));
         assert_eq!(
             store.get(oid, PropertyId::PresentValue),
-            Some(ClientDataValue::Real(3.14))
+            Some(ClientDataValue::Real(3.5))
         );
         store.remove_object(oid);
         assert_eq!(store.get(oid, PropertyId::PresentValue), None);

@@ -13,7 +13,7 @@ std = ["rustbac-datalink/std", "dep:tokio", "dep:tokio-serial", "dep:log", "allo
 alloc = ["rustbac-datalink/alloc"]
 
 [dependencies]
-rustbac-datalink = { path = "../rustbac-datalink", version = "0.4.0", default-features = false }
+rustbac-datalink = { path = "../rustbac-datalink", version = "0.4.1", default-features = false }
 tokio = { version = "1", features = ["rt", "time", "sync", "io-util"], optional = true }
 tokio-serial = { version = "5", optional = true }
 log = { version = "0.4", optional = true }

@@ -19,8 +19,12 @@ pub mod discovery;
 pub mod error;
 /// Atomic file read/write operations.
 pub mod file;
+/// Server-side intrinsic reporting engine.
+pub mod intrinsic;
 /// Long-running async notification listener.
 pub mod listener;
+/// PICS (Protocol Implementation Conformance Statement) document generation.
+pub mod pics;
 /// Point type inference for BACnet objects.
 pub mod point;
 /// ReadRange results and related types.
@@ -37,10 +41,6 @@ pub mod throttle;
 pub mod value;
 /// Device discovery walk — reads all objects and their properties.
 pub mod walk;
-/// Server-side intrinsic reporting engine.
-pub mod intrinsic;
-/// PICS (Protocol Implementation Conformance Statement) document generation.
-pub mod pics;
 
 pub use alarm::{
     AlarmSummaryItem, EnrollmentSummaryItem, EventInformationItem, EventInformationResult,
@@ -54,7 +54,12 @@ pub use cov_manager::{
 pub use discovery::{DiscoveredDevice, DiscoveredObject};
 pub use error::ClientError;
 pub use file::{AtomicReadFileResult, AtomicWriteFileResult};
+pub use intrinsic::{
+    AckedTransitions, IntrinsicAlgorithm, IntrinsicEnrollment, IntrinsicEventState,
+    IntrinsicReportingEngine, PendingEventNotification,
+};
 pub use listener::{create_notification_listener, Notification, NotificationListener};
+pub use pics::{PicsDocument, SegmentationSupport, SupportedObjectType, SupportedService};
 pub use point::{PointClassification, PointDirection, PointKind};
 pub use range::{ClientBitString, ReadRangeResult};
 pub use rustbac_bacnet_sc::BacnetScTransport;
@@ -70,11 +75,6 @@ pub use simulator::SimulatedDevice;
 pub use throttle::DeviceThrottle;
 pub use value::ClientDataValue;
 pub use walk::{DeviceInfo, DeviceWalkResult, ObjectSummary};
-pub use intrinsic::{
-    AckedTransitions, IntrinsicAlgorithm, IntrinsicEnrollment, IntrinsicEventState,
-    IntrinsicReportingEngine, PendingEventNotification,
-};
-pub use pics::{PicsDocument, SegmentationSupport, SupportedObjectType, SupportedService};
 
 // Internal helpers used by simulator module.
 use rustbac_core::encoding::{primitives::decode_unsigned, reader::Reader, tag::Tag};
@@ -111,6 +111,12 @@ fn data_value_to_client(value: rustbac_core::types::DataValue<'_>) -> ClientData
         rustbac_core::types::DataValue::Date(v) => ClientDataValue::Date(v),
         rustbac_core::types::DataValue::Time(v) => ClientDataValue::Time(v),
         rustbac_core::types::DataValue::ObjectId(v) => ClientDataValue::ObjectId(v),
+        rustbac_core::types::DataValue::ContextTagged { tag_num, data } => {
+            ClientDataValue::ContextTagged {
+                tag_num,
+                data: data.to_vec(),
+            }
+        }
         rustbac_core::types::DataValue::Constructed { tag_num, values } => {
             ClientDataValue::Constructed {
                 tag_num,

@@ -331,6 +331,10 @@ fn into_client_value(value: rustbac_core::types::DataValue<'_>) -> Option<Client
         DataValue::Date(v) => ClientDataValue::Date(v),
         DataValue::Time(v) => ClientDataValue::Time(v),
         DataValue::ObjectId(v) => ClientDataValue::ObjectId(v),
+        DataValue::ContextTagged { tag_num, data } => ClientDataValue::ContextTagged {
+            tag_num,
+            data: data.to_vec(),
+        },
         DataValue::Constructed { tag_num, values } => {
             let children: Vec<_> = values.into_iter().filter_map(into_client_value).collect();
             ClientDataValue::Constructed {

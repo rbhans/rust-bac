@@ -54,9 +54,7 @@ impl Default for AckedTransitions {
 #[derive(Debug, Clone)]
 pub enum IntrinsicAlgorithm {
     /// CHANGE_OF_VALUE — fires when value changes by more than `cov_increment`.
-    ChangeOfValue {
-        cov_increment: f64,
-    },
+    ChangeOfValue { cov_increment: f64 },
     /// OUT_OF_RANGE — fires when value exceeds high/low limits with deadband.
     OutOfRange {
         high_limit: f64,
@@ -64,9 +62,7 @@ pub enum IntrinsicAlgorithm {
         deadband: f64,
     },
     /// CHANGE_OF_STATE — fires when enumerated value matches an alarm value.
-    ChangeOfState {
-        alarm_values: Vec<u32>,
-    },
+    ChangeOfState { alarm_values: Vec<u32> },
     /// FLOATING_LIMIT — fires when value deviates from a setpoint by more than diff limits.
     FloatingLimit {
         setpoint_ref: ObjectId,
@@ -86,7 +82,6 @@ pub enum IntrinsicAlgorithm {
 /// Internal state for a single enrolled object.
 #[derive(Debug)]
 struct IntrinsicState {
-    object_id: ObjectId,
     algorithm: IntrinsicAlgorithm,
     current_event_state: IntrinsicEventState,
     acked_transitions: AckedTransitions,
@@ -142,7 +137,6 @@ impl IntrinsicReportingEngine {
     /// Enroll an object for intrinsic reporting.
     pub fn enroll(&self, enrollment: IntrinsicEnrollment) {
         let state = IntrinsicState {
-            object_id: enrollment.object_id,
             algorithm: enrollment.algorithm,
             current_event_state: IntrinsicEventState::Normal,
             acked_transitions: AckedTransitions::default(),
@@ -181,10 +175,7 @@ impl IntrinsicReportingEngine {
         setpoint_value: Option<f64>,
         feedback_value: Option<f64>,
     ) -> Vec<PendingEventNotification> {
-        let mut states = self
-            .states
-            .write()
-            .expect("IntrinsicReportingEngine lock");
+        let mut states = self.states.write().expect("IntrinsicReportingEngine lock");
 
         let state = match states.get_mut(&object_id) {
             Some(s) => s,
@@ -196,8 +187,9 @@ impl IntrinsicReportingEngine {
 
         // COV is special: it fires notifications without changing event state.
         if let IntrinsicAlgorithm::ChangeOfValue { cov_increment } = &state.algorithm {
+            // ASHRAE 135 §12.4.10: fire when |present_value - last_reported| >= COV_Increment.
             let should_fire = match state.last_reported_value {
-                Some(last) => (value - last).abs() > *cov_increment,
+                Some(last) => (value - last).abs() >= *cov_increment,
                 None => true, // First evaluation always fires.
             };
             if should_fire {
@@ -346,15 +338,8 @@ impl IntrinsicReportingEngine {
     }
 
     /// Acknowledge a transition for an enrolled object.
-    pub fn acknowledge(
-        &self,
-        object_id: ObjectId,
-        event_state: IntrinsicEventState,
-    ) -> bool {
-        let mut states = self
-            .states
-            .write()
-            .expect("IntrinsicReportingEngine lock");
+    pub fn acknowledge(&self, object_id: ObjectId, event_state: IntrinsicEventState) -> bool {
+        let mut states = self.states.write().expect("IntrinsicReportingEngine lock");
         if let Some(state) = states.get_mut(&object_id) {
             match event_state {
                 IntrinsicEventState::Normal => {
@@ -518,16 +503,25 @@ fn evaluate_command_failure(
     _state: &IntrinsicState,
     _now: Instant,
 ) -> IntrinsicEventState {
-    // Simple comparison: if feedback doesn't match command, it's OffNormal.
-    // Time delay is handled by the outer evaluate() method.
-    if (command_value - feedback_value).abs() > f64::EPSILON {
+    // COMMAND_FAILURE applies to objects with discrete present-values (BO, BV,
+    // MSO, MSV, etc.), so an exact mismatch (NaN included via `!=`) is the
+    // right trigger. Time delay is handled by the outer evaluate() method.
+    if command_value != feedback_value {
         IntrinsicEventState::OffNormal
     } else {
         IntrinsicEventState::Normal
     }
 }
 
-/// Encode an UnconfirmedEventNotification PDU.
+/// Encode an UnconfirmedEventNotification PDU per ASHRAE 135 13.10.
+///
+/// Field layout follows the ASN.1 `UnconfirmedEventNotification-Request`:
+/// `[0]` process-identifier, `[1]` initiating-device-id, `[2]` event-object-id,
+/// `[3]` time-stamp (CHOICE — sequenceNumber `[1]` = 0 placeholder),
+/// `[4]` notification-class, `[5]` priority, `[6]` event-type,
+/// `[8]` notify-type, `[10]` from-state, `[11]` to-state. Optional
+/// message-text `[7]`, ack-required `[9]`, and event-values `[12]` are
+/// omitted in this baseline.
 ///
 /// Returns the encoded bytes or `None` if the buffer is too small.
 pub fn encode_unconfirmed_event_notification(
@@ -539,7 +533,9 @@ pub fn encode_unconfirmed_event_notification(
     from_state: IntrinsicEventState,
 ) -> Option<Vec<u8>> {
     use rustbac_core::apdu::UnconfirmedRequestHeader;
-    use rustbac_core::encoding::primitives::encode_ctx_unsigned;
+    use rustbac_core::encoding::primitives::{
+        encode_closing_tag, encode_ctx_object_id, encode_ctx_unsigned, encode_opening_tag,
+    };
     use rustbac_core::encoding::writer::Writer;
     use rustbac_core::npdu::Npdu;
 
@@ -557,14 +553,26 @@ pub fn encode_unconfirmed_event_notification(
 
     // [0] process-identifier
     encode_ctx_unsigned(&mut w, 0, process_id).ok()?;
-    // [1] initiating-device-identifier
-    encode_ctx_unsigned(&mut w, 1, initiating_device_id.raw()).ok()?;
-    // [2] event-object-identifier
-    encode_ctx_unsigned(&mut w, 2, event_object_id.raw()).ok()?;
+    // [1] initiating-device-identifier (4-byte BACnetObjectIdentifier)
+    encode_ctx_object_id(&mut w, 1, initiating_device_id.raw()).ok()?;
+    // [2] event-object-identifier (4-byte BACnetObjectIdentifier)
+    encode_ctx_object_id(&mut w, 2, event_object_id.raw()).ok()?;
+    // [3] time-stamp — BACnetTimeStamp CHOICE; use sequenceNumber [1] = 0
+    // until a wall-clock source is wired in.
+    encode_opening_tag(&mut w, 3).ok()?;
+    encode_ctx_unsigned(&mut w, 1, 0).ok()?;
+    encode_closing_tag(&mut w, 3).ok()?;
     // [4] notification-class
     encode_ctx_unsigned(&mut w, 4, notification_class).ok()?;
-    // [9] event-type — 0 = change-of-bitstring (placeholder; actual type depends on algorithm)
-    encode_ctx_unsigned(&mut w, 9, 0).ok()?;
+    // [5] priority — 0 (highest); algorithm-specific override TBD.
+    encode_ctx_unsigned(&mut w, 5, 0).ok()?;
+    // [6] event-type — 0 = change-of-bitstring placeholder; algorithm-specific
+    // encoding pending.
+    encode_ctx_unsigned(&mut w, 6, 0).ok()?;
+    // [8] notify-type — 0 = alarm.
+    encode_ctx_unsigned(&mut w, 8, 0).ok()?;
+    // [10] from-state
+    encode_ctx_unsigned(&mut w, 10, from_state.to_u32()).ok()?;
     // [11] to-state
     encode_ctx_unsigned(&mut w, 11, event_state.to_u32()).ok()?;
 
@@ -652,9 +660,7 @@ mod tests {
         let engine = IntrinsicReportingEngine::new();
         engine.enroll(IntrinsicEnrollment {
             object_id: av(1),
-            algorithm: IntrinsicAlgorithm::ChangeOfValue {
-                cov_increment: 1.0,
-            },
+            algorithm: IntrinsicAlgorithm::ChangeOfValue { cov_increment: 1.0 },
             notification_class: 1,
             time_delay_ms: 0,
         });
@@ -759,10 +765,7 @@ mod tests {
         assert!(notifs.is_empty(), "should not fire before time delay");
 
         // State should still be Normal.
-        assert_eq!(
-            engine.event_state(av(1)),
-            Some(IntrinsicEventState::Normal)
-        );
+        assert_eq!(engine.event_state(av(1)), Some(IntrinsicEventState::Normal));
     }
 
     #[test]
@@ -811,15 +814,32 @@ mod tests {
 
     #[test]
     fn encode_event_notification_produces_bytes() {
-        let result = encode_unconfirmed_event_notification(
+        let bytes = encode_unconfirmed_event_notification(
             1,
             ObjectId::new(ObjectType::Device, 42),
             av(1),
             IntrinsicEventState::HighLimit,
             1,
             IntrinsicEventState::Normal,
+        )
+        .expect("encoder should produce bytes");
+
+        // Header (NPDU + APDU) is non-empty; payload follows.
+        assert!(bytes.len() > 16);
+
+        // [10] from-state = Normal (0):  tag byte = 0xA9, value = 0x00.
+        // [11] to-state   = HighLimit (3): tag byte = 0xB9, value = 0x03.
+        let from_state = [0xA9_u8, 0x00];
+        let to_state = [0xB9_u8, 0x03];
+        assert!(
+            bytes.windows(from_state.len()).any(|w| w == from_state),
+            "from-state field missing: {:02x?}",
+            bytes
         );
-        assert!(result.is_some());
-        assert!(result.unwrap().len() > 10);
+        assert!(
+            bytes.windows(to_state.len()).any(|w| w == to_state),
+            "to-state field missing: {:02x?}",
+            bytes
+        );
     }
 }

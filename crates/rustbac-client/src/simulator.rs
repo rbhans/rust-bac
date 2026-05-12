@@ -304,6 +304,10 @@ fn client_value_to_borrowed(val: &ClientDataValue) -> DataValue<'_> {
         ClientDataValue::Date(v) => DataValue::Date(*v),
         ClientDataValue::Time(v) => DataValue::Time(*v),
         ClientDataValue::ObjectId(v) => DataValue::ObjectId(*v),
+        ClientDataValue::ContextTagged { tag_num, data } => DataValue::ContextTagged {
+            tag_num: *tag_num,
+            data,
+        },
         ClientDataValue::Constructed { tag_num, values } => DataValue::Constructed {
             tag_num: *tag_num,
             values: values.iter().map(client_value_to_borrowed).collect(),

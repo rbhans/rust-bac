@@ -14,7 +14,7 @@ alloc = ["rustbac-core/alloc"]
 serde = ["dep:serde", "rustbac-core/serde"]
 
 [dependencies]
-rustbac-core = { path = "../rustbac-core", version = "0.4.0", default-features = false }
+rustbac-core = { path = "../rustbac-core", version = "0.4.1", default-features = false }
 thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 log = { workspace = true, optional = true }

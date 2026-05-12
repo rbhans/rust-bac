@@ -14,6 +14,11 @@ use alloc::vec::Vec;
 /// feature) holds a sequence of child values decoded from an opening/closing
 /// context-tag pair. This is used for complex properties such as weekly
 /// schedules and calendar entries.
+///
+/// The [`ContextTagged`](Self::ContextTagged) variant holds a context-tagged
+/// primitive value as opaque bytes. This appears as a CHOICE arm in array
+/// properties like `priority-array`, where each slot is a
+/// `BACnetPriorityValue` choice (e.g. `[0]` = Null, `[1]` = Real).
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataValue<'a> {
     Null,
@@ -29,6 +34,14 @@ pub enum DataValue<'a> {
     Date(Date),
     Time(Time),
     ObjectId(ObjectId),
+    /// A context-tagged primitive value carried inside a constructed sequence
+    /// (typically as a CHOICE arm). The semantics of `tag_num` depend on the
+    /// surrounding property; the caller interprets `data` according to the
+    /// expected choice type.
+    ContextTagged {
+        tag_num: u8,
+        data: &'a [u8],
+    },
     /// A constructed (complex) value containing a sequence of child values.
     ///
     /// The `tag_num` is the context tag number from the opening/closing pair.

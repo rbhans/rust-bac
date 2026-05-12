@@ -105,6 +105,14 @@ pub fn encode_application_data_value(
             .encode(w)?;
             w.write_all(&v.raw().to_be_bytes())
         }
+        DataValue::ContextTagged { tag_num, data } => {
+            Tag::Context {
+                tag_num: *tag_num,
+                len: u32_len(data.len())?,
+            }
+            .encode(w)?;
+            w.write_all(data)
+        }
         #[cfg(feature = "alloc")]
         DataValue::Constructed { tag_num, values } => {
             Tag::Opening { tag_num: *tag_num }.encode(w)?;
@@ -231,6 +239,10 @@ pub fn decode_application_data_value_from_tag<'a>(
                 [b[0], b[1], b[2], b[3]],
             ))))
         }
+        Tag::Context { tag_num, len } => Ok(DataValue::ContextTagged {
+            tag_num,
+            data: r.read_exact(len as usize)?,
+        }),
         #[cfg(feature = "alloc")]
         Tag::Opening { tag_num } => {
             let mut children = Vec::new();
@@ -326,7 +338,7 @@ mod tests {
                 DataValue::CharacterString("test"),
                 DataValue::Constructed {
                     tag_num: 0,
-                    values: vec![DataValue::Boolean(true), DataValue::Real(3.14)],
+                    values: vec![DataValue::Boolean(true), DataValue::Real(2.5)],
                 },
             ],
         };
@@ -337,5 +349,63 @@ mod tests {
         let mut r = Reader::new(w.as_written());
         let got = decode_application_data_value(&mut r).unwrap();
         assert_eq!(got, value);
+    }
+
+    #[test]
+    fn value_codec_roundtrip_context_tagged() {
+        let cases = [
+            DataValue::ContextTagged {
+                tag_num: 0,
+                data: &[],
+            },
+            DataValue::ContextTagged {
+                tag_num: 1,
+                data: &[0x42, 0x96, 0x00, 0x00],
+            },
+            DataValue::ContextTagged {
+                tag_num: 5,
+                data: &[0xAB, 0xCD],
+            },
+        ];
+
+        for v in cases {
+            let mut buf = [0u8; 64];
+            let mut w = Writer::new(&mut buf);
+            encode_application_data_value(&mut w, &v).unwrap();
+            let mut r = Reader::new(w.as_written());
+            let got = decode_application_data_value(&mut r).unwrap();
+            assert_eq!(got, v);
+        }
+    }
+
+    #[test]
+    fn value_codec_decodes_priority_array_shape() {
+        use alloc::vec;
+
+        // Constructed [3] wrapping 3 priority slots: Null, Real(75.0), Null.
+        let outer = DataValue::Constructed {
+            tag_num: 3,
+            values: vec![
+                DataValue::ContextTagged {
+                    tag_num: 0,
+                    data: &[],
+                },
+                DataValue::ContextTagged {
+                    tag_num: 1,
+                    data: &[0x42, 0x96, 0x00, 0x00],
+                },
+                DataValue::ContextTagged {
+                    tag_num: 0,
+                    data: &[],
+                },
+            ],
+        };
+
+        let mut buf = [0u8; 64];
+        let mut w = Writer::new(&mut buf);
+        encode_application_data_value(&mut w, &outer).unwrap();
+        let mut r = Reader::new(w.as_written());
+        let got = decode_application_data_value(&mut r).unwrap();
+        assert_eq!(got, outer);
     }
 }

@@ -1271,7 +1271,7 @@ impl CovSubscriptionManager {
             .subscriptions
             .lock()
             .expect("CovSubscriptionManager lock");
-        subs.retain(|s| s.expires_at.map_or(true, |exp| exp > now));
+        subs.retain(|s| s.expires_at.is_none_or(|exp| exp > now));
     }
 
     /// Get all active subscribers for a given object.
@@ -1284,7 +1284,7 @@ impl CovSubscriptionManager {
             .expect("CovSubscriptionManager lock");
         subs.iter()
             .filter(|s| {
-                s.monitored_object_id == object_id && s.expires_at.map_or(true, |exp| exp > now)
+                s.monitored_object_id == object_id && s.expires_at.is_none_or(|exp| exp > now)
             })
             .map(|s| {
                 (
@@ -1304,7 +1304,7 @@ impl CovSubscriptionManager {
             .lock()
             .expect("CovSubscriptionManager lock");
         subs.iter()
-            .filter(|s| s.expires_at.map_or(true, |exp| exp > now))
+            .filter(|s| s.expires_at.is_none_or(|exp| exp > now))
             .count()
     }
 }

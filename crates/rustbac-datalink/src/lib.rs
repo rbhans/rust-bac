@@ -28,6 +28,6 @@ pub use bip::transport::{BacnetIpTransport, BroadcastDistributionEntry, ForeignD
 pub use bip6::transport::BacnetIp6Transport;
 #[cfg(feature = "std")]
 pub use capture::CapturingDataLink;
-pub use traits::DataLinkError;
 #[cfg(feature = "std")]
 pub use traits::DataLink;
+pub use traits::DataLinkError;

@@ -12,6 +12,19 @@ use rustbac_datalink::{DataLink, DataLinkAddress, DataLinkError};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Boxed future returned by [`RouterDataLink::send_frame`].
+pub type SendFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DataLinkError>> + Send + 'a>>;
+
+/// Boxed future returned by [`RouterDataLink::recv_frame`].
+pub type RecvFuture<'a> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<(usize, DataLinkAddress), DataLinkError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 /// Object-safe data-link abstraction for the router.
 ///
 /// The upstream `DataLink` trait uses native async methods and is not
@@ -20,38 +33,19 @@ use tokio::sync::RwLock;
 /// ports in a single `Vec`.
 pub trait RouterDataLink: Send + Sync {
     /// Send a frame to the given address.
-    fn send_frame<'a>(
-        &'a self,
-        address: DataLinkAddress,
-        payload: &'a [u8],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DataLinkError>> + Send + 'a>>;
+    fn send_frame<'a>(&'a self, address: DataLinkAddress, payload: &'a [u8]) -> SendFuture<'a>;
 
     /// Receive a frame into `buf`, returning `(bytes_read, source_address)`.
-    fn recv_frame<'a>(
-        &'a self,
-        buf: &'a mut [u8],
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(usize, DataLinkAddress), DataLinkError>> + Send + 'a>,
-    >;
+    fn recv_frame<'a>(&'a self, buf: &'a mut [u8]) -> RecvFuture<'a>;
 }
 
 /// Implement `RouterDataLink` for `BacnetIpTransport` which has `Send` futures.
 impl RouterDataLink for rustbac_datalink::BacnetIpTransport {
-    fn send_frame<'a>(
-        &'a self,
-        address: DataLinkAddress,
-        payload: &'a [u8],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DataLinkError>> + Send + 'a>>
-    {
+    fn send_frame<'a>(&'a self, address: DataLinkAddress, payload: &'a [u8]) -> SendFuture<'a> {
         Box::pin(self.send(address, payload))
     }
 
-    fn recv_frame<'a>(
-        &'a self,
-        buf: &'a mut [u8],
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(usize, DataLinkAddress), DataLinkError>> + Send + 'a>,
-    > {
+    fn recv_frame<'a>(&'a self, buf: &'a mut [u8]) -> RecvFuture<'a> {
         Box::pin(self.recv(buf))
     }
 }
@@ -237,7 +231,10 @@ async fn handle_frame(
                     _ => DataLinkAddress::local_broadcast(47808),
                 };
 
-                let _ = ports[target_port].1.send_frame(target_addr, &fwd_frame).await;
+                let _ = ports[target_port]
+                    .1
+                    .send_frame(target_addr, &fwd_frame)
+                    .await;
             }
             Some(RouteEntry::Learned(target_port, via)) => {
                 if target_port == port_index {
@@ -348,7 +345,8 @@ fn mac_from_address(network: u16, addr: &DataLinkAddress) -> NpduAddress {
 fn encode_npdu_with_payload(npdu: &Npdu, payload: &[u8]) -> Result<Vec<u8>, DataLinkError> {
     let mut buf = [0u8; 1500];
     let mut w = Writer::new(&mut buf);
-    npdu.encode(&mut w).map_err(|_| DataLinkError::InvalidFrame)?;
+    npdu.encode(&mut w)
+        .map_err(|_| DataLinkError::InvalidFrame)?;
     w.write_all(payload)
         .map_err(|_| DataLinkError::FrameTooLarge)?;
     Ok(w.as_written().to_vec())
@@ -357,8 +355,8 @@ fn encode_npdu_with_payload(npdu: &Npdu, payload: &[u8]) -> Result<Vec<u8>, Data
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use std::collections::VecDeque;
+    use std::sync::Mutex;
 
     /// A mock DataLink that records sent frames and can inject received frames.
     #[derive(Clone)]
@@ -390,12 +388,10 @@ mod tests {
             &'a self,
             address: DataLinkAddress,
             payload: &'a [u8],
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DataLinkError>> + Send + 'a>>
-        {
-            self.sent
-                .lock()
-                .unwrap()
-                .push((address, payload.to_vec()));
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), DataLinkError>> + Send + 'a>,
+        > {
+            self.sent.lock().unwrap().push((address, payload.to_vec()));
             Box::pin(std::future::ready(Ok(())))
         }
 
@@ -403,7 +399,11 @@ mod tests {
             &'a self,
             buf: &'a mut [u8],
         ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<(usize, DataLinkAddress), DataLinkError>> + Send + 'a>,
+            Box<
+                dyn std::future::Future<Output = Result<(usize, DataLinkAddress), DataLinkError>>
+                    + Send
+                    + 'a,
+            >,
         > {
             if let Some((data, source)) = self.recv_queue.lock().unwrap().pop_front() {
                 let n = data.len().min(buf.len());
@@ -464,10 +464,8 @@ mod tests {
             t.add_direct_route(2, 1);
         }
 
-        let ports: Vec<(u16, Arc<dyn RouterDataLink>)> = vec![
-            (1, Arc::new(dl_a.clone())),
-            (2, Arc::new(dl_b.clone())),
-        ];
+        let ports: Vec<(u16, Arc<dyn RouterDataLink>)> =
+            vec![(1, Arc::new(dl_a.clone())), (2, Arc::new(dl_b.clone()))];
 
         handle_frame(&frame, source_addr(), 0, 1, &table, &ports)
             .await
@@ -521,7 +519,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(dl_a.take_sent().is_empty(), "should not forward back to ingress");
+        assert!(
+            dl_a.take_sent().is_empty(),
+            "should not forward back to ingress"
+        );
         assert_eq!(dl_b.take_sent().len(), 1);
         assert_eq!(dl_c.take_sent().len(), 1);
     }
@@ -548,16 +549,17 @@ mod tests {
             t.add_direct_route(2, 1);
         }
 
-        let ports: Vec<(u16, Arc<dyn RouterDataLink>)> = vec![
-            (1, Arc::new(dl_a.clone())),
-            (2, Arc::new(dl_b.clone())),
-        ];
+        let ports: Vec<(u16, Arc<dyn RouterDataLink>)> =
+            vec![(1, Arc::new(dl_a.clone())), (2, Arc::new(dl_b.clone()))];
 
         handle_frame(&frame, source_addr(), 0, 1, &table, &ports)
             .await
             .unwrap();
 
-        assert!(dl_b.take_sent().is_empty(), "hop count 0 should be discarded");
+        assert!(
+            dl_b.take_sent().is_empty(),
+            "hop count 0 should be discarded"
+        );
     }
 
     #[tokio::test]

@@ -96,7 +96,7 @@ impl PicsDocument {
             "  Firmware Revision:      {}\n",
             self.firmware_revision
         ));
-        out.push_str("\n");
+        out.push('\n');
 
         out.push_str("-- BACnet Protocol --\n\n");
         out.push_str(&format!(
@@ -115,7 +115,7 @@ impl PicsDocument {
             "  Segmentation Supported:     {}\n",
             self.segmentation_supported.as_str()
         ));
-        out.push_str("\n");
+        out.push('\n');
 
         out.push_str("-- Supported Services --\n\n");
         out.push_str("  Service                               Initiate  Execute\n");
@@ -125,7 +125,7 @@ impl PicsDocument {
             let exec = if svc.execute { "Yes" } else { "No" };
             out.push_str(&format!("  {:<38}  {:<8}  {}\n", svc.name, init, exec));
         }
-        out.push_str("\n");
+        out.push('\n');
 
         out.push_str("-- Supported Object Types --\n\n");
         out.push_str("  Object Type                           Createable  Deletable\n");

@@ -165,10 +165,10 @@ impl MstpTransport {
             .stop_bits(tokio_serial::StopBits::One);
 
         let port = tokio_serial::SerialStream::open(&builder).map_err(|e| {
-            DataLinkError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to open serial port {}: {e}", config.port),
-            ))
+            DataLinkError::Io(std::io::Error::other(format!(
+                "Failed to open serial port {}: {e}",
+                config.port
+            )))
         })?;
 
         let state = TokenState::new(config.mac_address, config.max_master);
@@ -205,16 +205,10 @@ impl MstpTransport {
     ) -> Result<(), DataLinkError> {
         let encoded = frame.encode();
         port.write_all(&encoded).await.map_err(|e| {
-            DataLinkError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Serial write failed: {e}"),
-            ))
+            DataLinkError::Io(std::io::Error::other(format!("Serial write failed: {e}")))
         })?;
         port.flush().await.map_err(|e| {
-            DataLinkError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Serial flush failed: {e}"),
-            ))
+            DataLinkError::Io(std::io::Error::other(format!("Serial flush failed: {e}")))
         })?;
         Ok(())
     }
@@ -332,10 +326,9 @@ impl MstpTransport {
                     rx_buf.extend_from_slice(&tmp[..n]);
                 }
                 Ok(Err(e)) => {
-                    return Err(DataLinkError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Serial read failed: {e}"),
-                    )));
+                    return Err(DataLinkError::Io(std::io::Error::other(format!(
+                        "Serial read failed: {e}"
+                    ))));
                 }
                 Err(_) => {
                     // Timeout expired

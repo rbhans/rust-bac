@@ -40,12 +40,13 @@ impl BacnetIp6Transport {
 
         // Join multicast group.
         let std_socket = socket.into_std()?;
-        std_socket.join_multicast_v6(&multicast, if_index).map_err(|e| {
-            DataLinkError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("failed to join multicast group: {e}"),
-            ))
-        })?;
+        std_socket
+            .join_multicast_v6(&multicast, if_index)
+            .map_err(|e| {
+                DataLinkError::Io(std::io::Error::other(format!(
+                    "failed to join multicast group: {e}"
+                )))
+            })?;
         let socket = UdpSocket::from_std(std_socket)?;
         let port = addr.port();
 

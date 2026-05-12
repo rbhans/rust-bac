@@ -70,7 +70,12 @@ impl RoutingTable {
 
     /// Return all reachable network numbers (direct + learned).
     pub fn all_reachable_networks(&self) -> Vec<u16> {
-        let mut nets: Vec<u16> = self.direct.keys().chain(self.learned.keys()).copied().collect();
+        let mut nets: Vec<u16> = self
+            .direct
+            .keys()
+            .chain(self.learned.keys())
+            .copied()
+            .collect();
         nets.sort_unstable();
         nets.dedup();
         nets

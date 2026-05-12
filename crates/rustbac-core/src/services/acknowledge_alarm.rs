@@ -56,7 +56,7 @@ pub struct AcknowledgeAlarmRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> AcknowledgeAlarmRequest<'a> {
+impl AcknowledgeAlarmRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         ConfirmedRequestHeader {
             segmented: false,

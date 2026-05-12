@@ -21,7 +21,7 @@ pub struct WritePropertyRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> Default for WritePropertyRequest<'a> {
+impl Default for WritePropertyRequest<'_> {
     fn default() -> Self {
         Self {
             object_id: ObjectId::new(crate::types::ObjectType::AnalogValue, 0),
@@ -34,7 +34,7 @@ impl<'a> Default for WritePropertyRequest<'a> {
     }
 }
 
-impl<'a> WritePropertyRequest<'a> {
+impl WritePropertyRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         ConfirmedRequestHeader {
             segmented: false,

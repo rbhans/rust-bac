@@ -38,7 +38,7 @@ pub struct ReadPropertyMultipleRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> ReadPropertyMultipleRequest<'a> {
+impl ReadPropertyMultipleRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         ConfirmedRequestHeader {
             segmented: false,

@@ -49,7 +49,7 @@ pub struct DeviceCommunicationControlRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> DeviceCommunicationControlRequest<'a> {
+impl DeviceCommunicationControlRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         ConfirmedRequestHeader {
             segmented: false,
@@ -81,7 +81,7 @@ pub struct ReinitializeDeviceRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> ReinitializeDeviceRequest<'a> {
+impl ReinitializeDeviceRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         ConfirmedRequestHeader {
             segmented: false,

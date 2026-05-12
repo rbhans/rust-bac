@@ -26,7 +26,7 @@ pub struct ConfirmedPrivateTransferRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> ConfirmedPrivateTransferRequest<'a> {
+impl ConfirmedPrivateTransferRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         ConfirmedRequestHeader {
             segmented: false,

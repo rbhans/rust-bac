@@ -30,7 +30,7 @@ pub struct WritePropertyMultipleRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> WritePropertyMultipleRequest<'a> {
+impl WritePropertyMultipleRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         ConfirmedRequestHeader {
             segmented: false,

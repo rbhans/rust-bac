@@ -20,7 +20,7 @@ pub struct AddListElementRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> AddListElementRequest<'a> {
+impl AddListElementRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         encode_list_element_request(w, self, SERVICE_ADD_LIST_ELEMENT)
     }
@@ -35,7 +35,7 @@ pub struct RemoveListElementRequest<'a> {
     pub invoke_id: u8,
 }
 
-impl<'a> RemoveListElementRequest<'a> {
+impl RemoveListElementRequest<'_> {
     pub fn encode(&self, w: &mut Writer<'_>) -> Result<(), EncodeError> {
         encode_list_element_request(
             w,
